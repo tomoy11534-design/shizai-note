@@ -1,0 +1,11 @@
+{
+	"name": "資材ノート",
+	"short_name": "資材ノート",
+	"description": "農業資材の在庫・価格・取扱説明書を家族で管理するアプリ",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#f6f5f0",
+	"theme_color": "#2f6b3a",
+	"lang": "ja",
+	"icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

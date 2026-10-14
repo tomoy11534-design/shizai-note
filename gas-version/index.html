@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="theme-color" content="#2f6b3a">
+  <?!= include('style'); ?>
+</head>
+<body>
+  <header class="app-header">
+    <h1>資材ノート</h1>
+    <div class="header-right">
+      <span class="sync" id="sync-status" aria-live="polite"></span>
+      <button type="button" class="icon-btn" id="refresh-btn" title="最新に更新" aria-label="最新に更新">⟳</button>
+    </div>
+  </header>
+
+  <!-- タブ（スマホでは画面下、パソコンでは上） -->
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="stock" class="active"><span class="tab-icon">📦</span>在庫</button>
+    <button type="button" role="tab" data-tab="price"><span class="tab-icon">📈</span>価格</button>
+    <button type="button" role="tab" data-tab="manual"><span class="tab-icon">📎</span>説明書</button>
+    <button type="button" role="tab" data-tab="history"><span class="tab-icon">📝</span>履歴</button>
+    <button type="button" role="tab" data-tab="summary"><span class="tab-icon">📊</span>集計</button>
+    <button type="button" role="tab" data-tab="settings"><span class="tab-icon">⚙</span>設定</button>
+  </nav>
+
+  <main class="container">
+    <div class="loading" id="loading">データを読み込んでいます…</div>
+
+    <!-- ===== 在庫タブ ===== -->
+    <section class="tab-panel active" id="tab-stock">
+      <div class="tiles" id="stock-tiles"></div>
+      <div class="panel attention" id="attention-panel" hidden></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>在庫一覧</h2>
+          <button type="button" class="btn btn-primary" id="add-item-btn">＋ 資材を登録</button>
+        </div>
+        <div class="filters">
+          <input type="search" id="stock-search" placeholder="資材名・メモ・購入先で検索">
+          <select id="stock-category"></select>
+          <select id="stock-supplier"></select>
+          <select id="stock-status">
+            <option value="">すべての状態</option>
+            <option value="attention">注意が必要なもの</option>
+            <option value="out">在庫切れ</option>
+            <option value="low">残りわずか</option>
+            <option value="expiry">期限切れ・期限間近</option>
+            <option value="priceup">値上がり注意</option>
+          </select>
+        </div>
+        <div id="stock-list"></div>
+        <div class="list-foot">
+          <button type="button" class="btn" id="export-items-csv">CSVで出力</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 価格タブ ===== -->
+    <section class="tab-panel" id="tab-price">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>価格の変動</h2>
+          <label class="inline">基準年 <select id="price-year"></select></label>
+        </div>
+        <p class="note">年平均単価 ＝ その年の購入金額の合計 ÷ 購入数量の合計。全国の値は農林水産省「農業物価統計調査」（同じ月どうしで比較）。</p>
+        <div class="tiles" id="price-tiles"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>価格の推移</h2>
+          <div class="seg" id="chart-mode">
+            <button type="button" data-mode="yen" class="active">金額（円）</button>
+            <button type="button" data-mode="index">指数（最初の年＝100）</button>
+          </div>
+        </div>
+        <p class="note" id="chart-help">下の一覧表で ☑ を付けた資材（最大5つ）を表示します。「指数」にすると全国の値動き（点線）と比べられます。</p>
+        <div class="chart-box"><canvas id="price-chart" aria-label="資材の価格推移のグラフ"></canvas></div>
+        <p class="empty" id="price-chart-empty" hidden></p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>資材ごとの変動率</h2>
+          <button type="button" class="btn" id="export-price-csv">CSVで出力</button>
+        </div>
+        <div class="filters">
+          <input type="search" id="price-search" placeholder="資材名で検索">
+          <select id="price-category"></select>
+          <select id="price-sort">
+            <option value="yoy-desc">前年比の大きい順</option>
+            <option value="yoy-asc">前年比の小さい順</option>
+            <option value="r3-desc">3年前比の大きい順</option>
+            <option value="gap-desc">全国との差の大きい順</option>
+            <option value="name">資材名順</option>
+          </select>
+        </div>
+        <div class="table-scroll"><table class="data-table" id="price-table"></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>カテゴリ別の資材費の変動率</h2>
+        <p class="note">「前の年と同じ量を買ったら、資材費が何％変わるか」。両方の年に購入記録がある資材だけで計算します。</p>
+        <div class="chart-box"><canvas id="category-chart" aria-label="カテゴリ別の資材費の変動率のグラフ"></canvas></div>
+        <div class="table-scroll"><table class="data-table" id="category-table"></table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>全国の農業生産資材価格指数</h2>
+          <span class="note" id="public-status"></span>
+        </div>
+        <p class="note">2020年＝100。選んだ類別（最大5つ）の月ごとの推移です。</p>
+        <div class="chips" id="index-chips"></div>
+        <div class="chart-box"><canvas id="index-chart" aria-label="全国の農業生産資材価格指数のグラフ"></canvas></div>
+        <p class="empty" id="index-empty" hidden>公的データがまだ取得されていません。設定タブの「今すぐ取得」を押してください。</p>
+      </div>
+    </section>
+
+    <!-- ===== 説明書タブ ===== -->
+    <section class="tab-panel" id="tab-manual">
+      <div class="tiles" id="manual-tiles"></div>
+      <div class="panel">
+        <h2>取扱説明書と用途</h2>
+        <p class="note">資材ごとに、取扱説明書（PDF・画像）と「何のために使うか」をまとめて管理します。スマホではカメラで撮った写真もそのまま登録できます。</p>
+        <p class="conflict" id="manual-not-ready" hidden>説明書の保存フォルダがまだありません。スプレッドシートの所有者が一度アプリを開くと使えるようになります。</p>
+        <div class="filters">
+          <input type="search" id="manual-search" placeholder="資材名・用途・説明書の表題で検索">
+          <select id="manual-category"></select>
+          <select id="manual-filter">
+            <option value="">すべての資材</option>
+            <option value="has">説明書あり</option>
+            <option value="none">説明書なし</option>
+            <option value="nopurpose">用途が未入力</option>
+          </select>
+        </div>
+        <div id="manual-list"></div>
+      </div>
+    </section>
+
+    <!-- ===== 履歴タブ ===== -->
+    <section class="tab-panel" id="tab-history">
+      <div class="panel">
+        <h2>入出庫・価格の記録</h2>
+        <div class="filters">
+          <select id="history-item"></select>
+          <select id="history-period">
+            <option value="all">すべての期間</option>
+            <option value="thisMonth">今月</option>
+            <option value="lastMonth">先月</option>
+            <option value="thisYear">今年</option>
+            <option value="lastYear">昨年</option>
+          </select>
+          <select id="history-type">
+            <option value="">すべての種類</option>
+            <option value="purchase">購入（入庫・過去の購入）</option>
+            <option value="入庫">入庫</option>
+            <option value="出庫">出庫</option>
+            <option value="調整">数量の調整</option>
+            <option value="過去の購入">過去の購入</option>
+            <option value="登録">登録</option>
+            <option value="編集">編集</option>
+            <option value="削除">削除</option>
+            <option value="取消">取消</option>
+          </select>
+        </div>
+        <div id="history-list"></div>
+      </div>
+    </section>
+
+    <!-- ===== 集計タブ ===== -->
+    <section class="tab-panel" id="tab-summary">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>月別・カテゴリ別の購入金額</h2>
+          <label class="inline">年 <select id="summary-year"></select></label>
+        </div>
+        <p class="note">入庫と過去の購入の金額の合計です。登録したときの最初の在庫は含みません。</p>
+        <div class="table-scroll"><table class="data-table compact" id="summary-amount"></table></div>
+      </div>
+      <div class="panel">
+        <h2>資材ごとの月別入出庫数</h2>
+        <p class="note">上段が入庫（購入）、下段が出庫の数量です。</p>
+        <div class="table-scroll"><table class="data-table compact" id="summary-qty"></table></div>
+      </div>
+    </section>
+
+    <!-- ===== 設定タブ ===== -->
+    <section class="tab-panel" id="tab-settings">
+      <div class="panel">
+        <h2>あなたの表示名</h2>
+        <p class="note" id="me-email"></p>
+        <form class="row-form" id="name-form">
+          <input type="text" id="my-name" maxlength="20" placeholder="例：たろう">
+          <button type="submit" class="btn btn-primary">保存</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>カテゴリ</h2>
+        <p class="note">並び順は、入力欄の選択肢や一覧の並びに反映されます。「比べる全国データ」は、価格の変動を全国と比べるときに使います。</p>
+        <div id="category-list"></div>
+        <form class="row-form" id="category-form">
+          <input type="text" id="new-category" maxlength="30" placeholder="新しいカテゴリ名">
+          <button type="submit" class="btn btn-primary">追加</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>注意表示</h2>
+        <form class="settings-grid" id="threshold-form">
+          <label>期限間近とする日数<input type="number" id="set-alert-days" min="1" inputmode="numeric"></label>
+          <label>値上がり注意（前年比％以上）<input type="number" id="set-price-pct" min="0" step="any" inputmode="decimal"></label>
+          <label>全国より高め（差がポイント以上）<input type="number" id="set-gap-pts" min="0" step="any" inputmode="decimal"></label>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>メール通知・公的データの自動取得</h2>
+        <p class="note" id="owner-note"></p>
+        <form class="settings-grid" id="notify-form">
+          <label class="check"><input type="checkbox" id="set-notify"> 注意が必要な資材を毎日メールで知らせる</label>
+          <label>通知する時刻<select id="set-notify-hour"></select></label>
+          <label class="check"><input type="checkbox" id="set-public-auto"> 全国データを自動で取得する（毎月1日・15日）</label>
+          <label class="check"><input type="checkbox" id="set-public-notify"> 全国データが新しくなったらメールで知らせる</label>
+          <label>取得元のExcelのURL（通常は空欄）<input type="url" id="set-public-url" placeholder="空欄なら農林水産省のページから自動で探します"></label>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>全国データ（農業物価統計調査）</h2>
+        <dl class="status-list" id="public-info"></dl>
+        <button type="button" class="btn" id="fetch-public-btn">今すぐ取得</button>
+        <p class="note">出典：農林水産省「農業物価統計調査」。最新の値は速報値（概数値）で、あとで確定値に置き換わります。</p>
+      </div>
+
+      <div class="panel">
+        <h2>家族との共有</h2>
+        <p class="note">スプレッドシートの「共有」で家族のGoogleアカウントを「編集者」に追加し、次のURLを送ってください。共有をやめるとアプリも開けなくなります。</p>
+        <div class="row-form">
+          <input type="text" id="app-url" readonly>
+          <button type="button" class="btn" id="copy-url-btn">コピー</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== 小窓（モーダル） ===== -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-body" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button type="button" class="icon-btn" data-close aria-label="閉じる">✕</button>
+      </div>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- お知らせ表示 -->
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <?!= include('app-script'); ?>
+</body>
+</html>

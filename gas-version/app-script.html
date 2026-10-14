@@ -1,0 +1,1835 @@
+<script>
+'use strict';
+
+// ===== 定数 =====
+const CACHE_KEY = 'shizai-note-cache-v1';
+const TAB_KEY = 'shizai-note-tab';
+const PURCHASE_TYPES = ['入庫', '過去の購入'];
+const CANCELABLE_TYPES = ['入庫', '出庫', '調整', '過去の購入'];
+const MAX_SERIES = 5;
+const UNIT_CANDIDATES = ['袋', '本', '箱', '枚', '個', '巻', '缶', 'kg', 'L', 'ml', 'm'];
+
+// ===== 状態 =====
+let data = null;        // サーバーから受け取ったデータ
+let derived = null;     // 計算結果（データが変わったら作り直す）
+let lastLoaded = 0;     // 最後に最新データを読み込んだ時刻
+let pending = 0;        // 保存中の件数
+let writeQueue = Promise.resolve(); // 保存を順番に送るための待ち行列
+const pendingDelta = {}; // ＋／−で、まだ保存が終わっていない増減
+
+const ui = {
+  tab: 'stock',
+  priceYear: new Date().getFullYear(),
+  chartMode: 'yen',
+  chartSel: [],         // 価格推移グラフに表示する資材 [{ id, slot }]
+  chartTouched: false,  // 利用者がグラフの資材を選び直したか
+  indexSel: [{ key: 'idx:農業生産資材総合', slot: 0 }, { key: 'idx:肥料', slot: 1 }, { key: 'idx:農業薬剤', slot: 2 }],
+  historyLimit: 200,
+  summaryYear: new Date().getFullYear(),
+};
+const charts = {};
+
+// ===== 小さな便利関数 =====
+const $ = (id) => document.getElementById(id);
+
+function esc(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function num(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const n = Number(value);
+  return isFinite(n) ? n : null;
+}
+
+function fmt(value, digits) {
+  return Number(value || 0).toLocaleString('ja-JP', { maximumFractionDigits: digits === undefined ? 2 : digits });
+}
+
+function yen(value) {
+  return value === null || value === undefined ? '—' : '¥' + Math.round(value).toLocaleString('ja-JP');
+}
+
+function pad(n) {
+  return ('0' + n).slice(-2);
+}
+
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
+function avg(list) {
+  return list.length ? list.reduce((a, b) => a + b, 0) / list.length : null;
+}
+
+function rate(current, base) {
+  return current !== null && current !== undefined && base ? (current / base - 1) * 100 : null;
+}
+
+// 変動率を矢印と色で表示する（色だけに頼らない）
+function chg(value) {
+  if (value === null || value === undefined || !isFinite(value)) return '<span class="chg na">—</span>';
+  if (Math.abs(value) < 0.05) return '<span class="chg flat">→ ±0.0%</span>';
+  if (value > 0) return '<span class="chg up">↑ +' + value.toFixed(1) + '%</span>';
+  return '<span class="chg down">↓ −' + Math.abs(value).toFixed(1) + '%</span>';
+}
+
+function pctPlain(value) {
+  if (value === null || value === undefined || !isFinite(value)) return '';
+  return (value > 0 ? '+' : '') + value.toFixed(1);
+}
+
+function userName(email) {
+  if (!email) return '';
+  const names = (data && data.settings.userNames) || {};
+  return names[email] || String(email).split('@')[0];
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function seriesColor(slot) {
+  return cssVar('--series-' + (slot + 1));
+}
+
+function errMsg(e) {
+  return (e && e.message ? e.message : String(e)).replace(/^Error:\s*/, '').replace(/^Exception:\s*/, '');
+}
+
+// ===== お知らせ・保存状態の表示 =====
+let toastTimer = null;
+function toast(message, isError) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'toast' + (isError ? ' error' : '');
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2500);
+}
+
+function updateSync() {
+  const el = $('sync-status');
+  if (pending > 0) el.textContent = '保存中…';
+  else if (lastLoaded) {
+    const d = new Date(lastLoaded);
+    el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' 更新';
+  } else el.textContent = '';
+}
+
+// ===== サーバーとのやりとり =====
+function server(fn) {
+  const args = Array.prototype.slice.call(arguments, 1);
+  return new Promise((resolve, reject) => {
+    const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+    runner[fn].apply(runner, args);
+  });
+}
+
+// 保存は1件ずつ順番に送る（順番が入れ替わって表示がずれるのを防ぐ）
+function save(fn, args) {
+  pending++;
+  updateSync();
+  const task = writeQueue.then(() => server.apply(null, [fn].concat(args || [])));
+  writeQueue = task.catch(() => {});
+  return task
+    .catch((e) => {
+      toast(errMsg(e), true);
+      throw e;
+    })
+    .finally(() => {
+      pending--;
+      updateSync();
+    });
+}
+
+async function loadAll(silent) {
+  if (pending > 0) return;
+  if (!silent) $('sync-status').textContent = '読み込み中…';
+  try {
+    const fresh = await server('getInitialData');
+    if (pending > 0) return; // 読み込み中に操作があったら、次の機会に読み直す
+    data = fresh;
+    lastLoaded = Date.now();
+    writeCache();
+    invalidate();
+    $('loading').hidden = true;
+    renderAll();
+  } catch (e) {
+    toast('読み込みに失敗しました：' + errMsg(e), true);
+  }
+  updateSync();
+}
+
+function readCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeCache() {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // 保存できなくても動作には影響しない
+  }
+}
+
+// 保存結果を手元のデータに反映する
+function applyResult(res) {
+  if (!res) return;
+  if (res.items) data.items = res.items;
+  if (res.categories) data.categories = res.categories;
+  if (res.item) {
+    const i = data.items.findIndex((x) => x.id === res.item.id);
+    if (i >= 0) data.items[i] = res.item;
+    else data.items.push(res.item);
+  }
+  if (res.deletedId) data.items = data.items.filter((x) => x.id !== res.deletedId);
+  (res.history || []).forEach((h) => {
+    const i = data.history.findIndex((x) => x.id === h.id);
+    if (i >= 0) data.history[i] = h;
+    else data.history.push(h);
+  });
+  if (res.settings) data.settings = res.settings;
+  if (res.publicData) data.publicData = res.publicData;
+  if (res.manual) {
+    data.manuals = manualList().filter((m) => m.id !== res.manual.id).concat([res.manual]);
+  }
+  if (res.deletedManualId) data.manuals = manualList().filter((m) => m.id !== res.deletedManualId);
+  writeCache();
+  invalidate();
+  renderAll();
+}
+
+// ===== 計算 =====
+function invalidate() {
+  derived = null;
+}
+
+function findItem(id) {
+  return data.items.find((x) => x.id === id);
+}
+
+function isCancelled(h) {
+  return h.cancelled === true || h.cancelled === 'TRUE';
+}
+
+function getDerived() {
+  if (derived) return derived;
+  const catOrder = new Map(data.categories.map((c, i) => [c.name, i]));
+  const pubMap = new Map(data.publicData.map((p) => [p.key, p]));
+
+  // 資材ごとの購入記録
+  const purchases = new Map();
+  data.history.forEach((h) => {
+    if (PURCHASE_TYPES.indexOf(h.type) < 0 || isCancelled(h)) return;
+    const price = num(h.unitPrice);
+    const date = String(h.date || '');
+    const year = Number(date.slice(0, 4));
+    if (price === null || !year) return;
+    const qty = Math.abs(num(h.qty) || 0) || 1;
+    const month = date.length >= 7 ? Number(date.slice(5, 7)) : null;
+    if (!purchases.has(h.itemId)) purchases.set(h.itemId, []);
+    purchases.get(h.itemId).push({ h: h, year: year, month: month, price: price, qty: qty, date: date });
+  });
+
+  // 資材ごと・年ごとの年平均単価（数量で重み付け）
+  const yearStats = new Map();
+  purchases.forEach((list, id) => {
+    const ys = {};
+    list.forEach((p) => {
+      const s = ys[p.year] || (ys[p.year] = { amt: 0, qty: 0, n: 0 });
+      s.amt += p.price * p.qty;
+      s.qty += p.qty;
+      s.n++;
+    });
+    Object.keys(ys).forEach((y) => { ys[y].avg = ys[y].qty ? ys[y].amt / ys[y].qty : null; });
+    yearStats.set(id, ys);
+  });
+
+  derived = { catOrder: catOrder, pubMap: pubMap, purchases: purchases, yearStats: yearStats, cmp: new Map() };
+  return derived;
+}
+
+function sortedItems(list) {
+  const order = getDerived().catOrder;
+  return list.slice().sort((a, b) =>
+    (order.has(a.category) ? order.get(a.category) : 999) - (order.has(b.category) ? order.get(b.category) : 999)
+    || String(a.name).localeCompare(String(b.name), 'ja'));
+}
+
+function publicRefFor(item) {
+  if (item.publicRef) return item.publicRef;
+  const c = data.categories.find((x) => x.name === item.category);
+  return c ? c.publicRef : '';
+}
+
+function publicSeriesFor(item) {
+  const ref = publicRefFor(item);
+  if (!ref || ref === 'none') return null;
+  return getDerived().pubMap.get(ref) || null;
+}
+
+function publicLabel(series) {
+  if (!series) return '';
+  return series.kind === 'idx' ? series.name : series.name + '（' + series.unit + '）';
+}
+
+// 全国データの変動率：基準年にある月と同じ月どうしで比べる
+function publicChange(series, year, back) {
+  if (!series) return null;
+  const months = Object.keys(series.data)
+    .filter((k) => k.indexOf(year + '-') === 0)
+    .map((k) => k.slice(5))
+    .filter((m) => series.data[(year - back) + '-' + m] !== undefined);
+  if (!months.length) return null;
+  const a = avg(months.map((m) => series.data[year + '-' + m]));
+  const b = avg(months.map((m) => series.data[(year - back) + '-' + m]));
+  return rate(a, b);
+}
+
+function publicYearAvg(series, year) {
+  if (!series) return null;
+  return avg(Object.keys(series.data).filter((k) => k.indexOf(year + '-') === 0).map((k) => series.data[k]));
+}
+
+function latestPublic(series) {
+  if (!series) return null;
+  const keys = Object.keys(series.data).sort();
+  if (!keys.length) return null;
+  const period = keys[keys.length - 1];
+  return { period: period, value: series.data[period], prov: (series.prov || []).indexOf(period) >= 0 };
+}
+
+/**
+ * 資材の価格比較
+ * 基準年に購入がなければ、基準年以前でデータがある最新の年を基準にする
+ */
+function compareItem(item, baseYear) {
+  const d = getDerived();
+  const key = item.id + '@' + baseYear;
+  if (d.cmp.has(key)) return d.cmp.get(key);
+
+  const ys = d.yearStats.get(item.id) || {};
+  const years = Object.keys(ys).map(Number).filter((y) => y <= baseYear).sort((a, b) => a - b);
+  const res = { item: item, hasData: years.length > 0, series: publicSeriesFor(item) };
+  if (years.length) {
+    const by = years[years.length - 1];
+    const avgOf = (y) => (ys[y] ? ys[y].avg : null);
+    Object.assign(res, { by: by, cur: avgOf(by), prev: avgOf(by - 1), y2: avgOf(by - 2), y3: avgOf(by - 3) });
+    res.yoy = rate(res.cur, res.prev);
+    res.r3 = rate(res.cur, res.y3);
+    res.cagr = res.y3 && res.cur !== null ? (Math.pow(res.cur / res.y3, 1 / 3) - 1) * 100 : null;
+    if (res.series) {
+      res.pubYoy = publicChange(res.series, by, 1);
+      res.pub3 = publicChange(res.series, by, 3);
+    }
+    res.gap = res.yoy !== null && res.pubYoy !== null && res.pubYoy !== undefined ? res.yoy - res.pubYoy : null;
+  }
+  d.cmp.set(key, res);
+  return res;
+}
+
+/**
+ * 資材費全体の変動率（前の年と同じ量を買った場合に何％変わるか）
+ * Σ（今年の単価 × 前年の数量）÷ Σ（前年の単価 × 前年の数量）− 1
+ */
+function costChange(year, filterFn) {
+  const ys = getDerived().yearStats;
+  let a = 0;
+  let b = 0;
+  let n = 0;
+  data.items.filter(filterFn || (() => true)).forEach((item) => {
+    const s = ys.get(item.id);
+    if (!s || !s[year] || !s[year - 1] || !s[year - 1].avg) return;
+    a += s[year].avg * s[year - 1].qty;
+    b += s[year - 1].avg * s[year - 1].qty;
+    n++;
+  });
+  return { pct: b ? (a / b - 1) * 100 : null, n: n };
+}
+
+// 資材の注意表示
+function itemTags(item) {
+  const s = data.settings;
+  const tags = [];
+  const stock = num(item.stock) || 0;
+  const reorder = num(item.reorderLevel);
+  const today = todayStr();
+  if (stock <= 0) tags.push({ cls: 'badge-danger', text: '在庫切れ', key: 'out' });
+  else if (reorder !== null && stock <= reorder) tags.push({ cls: 'badge-warn', text: '残りわずか', key: 'low' });
+  if (item.expiry) {
+    if (item.expiry < today) tags.push({ cls: 'badge-danger', text: '期限切れ', key: 'expiry' });
+    else if (item.expiry <= addDays(today, Number(s.alertDays) || 30)) tags.push({ cls: 'badge-warn', text: '期限間近', key: 'expiry' });
+  }
+  const c = compareItem(item, new Date().getFullYear());
+  if (c.yoy !== null && c.yoy !== undefined && c.yoy >= Number(s.priceAlertPct)) tags.push({ cls: 'badge-warn', text: '値上がり注意', key: 'priceup' });
+  if (c.gap !== null && c.gap !== undefined && c.gap >= Number(s.gapAlertPts)) tags.push({ cls: 'badge-warn', text: '全国より高め', key: 'priceup' });
+  return tags;
+}
+
+function tagsHtml(tags) {
+  return tags.map((t) => '<span class="badge ' + t.cls + '">' + esc(t.text) + '</span>').join('');
+}
+
+function purchaseYears() {
+  const set = new Set([new Date().getFullYear()]);
+  getDerived().purchases.forEach((list) => list.forEach((p) => set.add(p.year)));
+  return Array.from(set).sort((a, b) => b - a);
+}
+
+function suppliers() {
+  const set = new Set();
+  data.items.forEach((i) => { if (i.supplier) set.add(i.supplier); });
+  data.history.forEach((h) => { if (h.supplier) set.add(h.supplier); });
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
+function categoryOptions(selected, allLabel) {
+  return (allLabel ? '<option value="">' + esc(allLabel) + '</option>' : '')
+    + data.categories.map((c) => '<option value="' + esc(c.name) + '"' + (c.name === selected ? ' selected' : '') + '>' + esc(c.name) + '</option>').join('');
+}
+
+function keepSelect(el, html) {
+  const value = el.value;
+  el.innerHTML = html;
+  if (Array.prototype.some.call(el.options, (o) => o.value === value)) el.value = value;
+}
+
+// 比べる全国データの選択肢
+function publicOptions(selected, withInherit) {
+  let html = withInherit ? '<option value="">カテゴリの設定に従う</option>' : '';
+  html += '<option value="none"' + (selected === 'none' ? ' selected' : '') + '>比べない</option>';
+  const opt = (value, label) => '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') + '>' + esc(label) + '</option>';
+  const known = new Set(data.publicData.map((p) => p.key));
+  if (selected && selected !== 'none' && !known.has(selected)) {
+    html += opt(selected, selected.replace(/^idx:/, '').replace(/^item:/, '').split('|')[0] + '（データ未取得）');
+  }
+  const idx = data.publicData.filter((p) => p.kind === 'idx');
+  if (idx.length) html += '<optgroup label="価格指数（類別）">' + idx.map((p) => opt(p.key, p.name)).join('') + '</optgroup>';
+  const groups = {};
+  data.publicData.filter((p) => p.kind === 'item').forEach((p) => { (groups[p.group] = groups[p.group] || []).push(p); });
+  Object.keys(groups).forEach((g) => {
+    html += '<optgroup label="全国平均価格：' + esc(g) + '">'
+      + groups[g].map((p) => opt(p.key, p.name + '（' + p.spec + '・' + p.unit + '）')).join('') + '</optgroup>';
+  });
+  return html;
+}
+
+// ===== 全体の描画 =====
+function renderAll() {
+  if (!data) return;
+  renderFilters();
+  if (ui.tab === 'stock') renderStock();
+  if (ui.tab === 'price') renderPrice();
+  if (ui.tab === 'manual') renderManual();
+  if (ui.tab === 'history') renderHistory();
+  if (ui.tab === 'summary') renderSummary();
+  if (ui.tab === 'settings') renderSettings();
+}
+
+function renderFilters() {
+  keepSelect($('stock-category'), categoryOptions('', 'すべてのカテゴリ'));
+  keepSelect($('price-category'), categoryOptions('', 'すべてのカテゴリ'));
+  keepSelect($('manual-category'), categoryOptions('', 'すべてのカテゴリ'));
+  keepSelect($('stock-supplier'), '<option value="">すべての購入先</option>'
+    + suppliers().map((s) => '<option value="' + esc(s) + '">' + esc(s) + '</option>').join(''));
+
+  const years = purchaseYears();
+  const yearOpts = years.map((y) => '<option value="' + y + '">' + y + '年</option>').join('');
+  $('price-year').innerHTML = yearOpts;
+  $('price-year').value = String(ui.priceYear);
+  $('summary-year').innerHTML = yearOpts;
+  $('summary-year').value = String(ui.summaryYear);
+
+  // 履歴の資材の選択肢（削除した資材も含める）
+  const names = new Map();
+  data.history.forEach((h) => { if (h.itemId) names.set(h.itemId, h.itemName); });
+  data.items.forEach((i) => names.set(i.id, i.name));
+  keepSelect($('history-item'), '<option value="">すべての資材</option>' + Array.from(names.entries())
+    .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'ja'))
+    .map((e) => '<option value="' + esc(e[0]) + '">' + esc(e[1]) + (findItem(e[0]) ? '' : '（削除済み）') + '</option>').join(''));
+}
+
+// ===== 在庫タブ =====
+function filteredStockItems() {
+  const q = $('stock-search').value.trim().toLowerCase();
+  const cat = $('stock-category').value;
+  const sup = $('stock-supplier').value;
+  const status = $('stock-status').value;
+  return sortedItems(data.items.filter((item) => {
+    if (cat && item.category !== cat) return false;
+    if (sup && item.supplier !== sup) return false;
+    if (q && (item.name + ' ' + item.memo + ' ' + item.supplier + ' ' + (item.purpose || '')).toLowerCase().indexOf(q) < 0) return false;
+    if (status) {
+      const keys = itemTags(item).map((t) => t.key);
+      if (status === 'attention' ? !keys.length : keys.indexOf(status) < 0) return false;
+    }
+    return true;
+  }));
+}
+
+function renderStock() {
+  const list = filteredStockItems();
+  const thisYear = new Date().getFullYear();
+  const stockValue = list.reduce((sum, i) => sum + Math.round((num(i.stock) || 0) * (num(i.price) || 0)), 0);
+  let bought = 0;
+  getDerived().purchases.forEach((ps) => ps.forEach((p) => { if (p.year === thisYear) bought += p.price * p.qty; }));
+  const cost = costChange(thisYear);
+  const total = getDerived().pubMap.get('idx:農業生産資材総合');
+
+  $('stock-tiles').innerHTML = [
+    tile('品目数', list.length + ' 品目', list.length === data.items.length ? '' : '全 ' + data.items.length + ' 品目中'),
+    tile('在庫金額', yen(stockValue), '表示中の資材の合計'),
+    tile(thisYear + '年の購入金額', yen(bought), '入庫・過去の購入'),
+    tile('資材費の前年比', chg(cost.pct), cost.n ? cost.n + '品目で計算' + (total ? '／全国 ' + chgText(publicChange(total, thisYear, 1)) : '') : '前年と今年の購入記録が必要'),
+  ].join('');
+
+  // 注意が必要な資材
+  const attention = sortedItems(data.items).map((i) => ({ item: i, tags: itemTags(i) })).filter((x) => x.tags.length);
+  const panel = $('attention-panel');
+  panel.hidden = attention.length === 0;
+  panel.innerHTML = '<h2>注意が必要な資材（' + attention.length + '件）</h2><ul>'
+    + attention.slice(0, 30).map((x) => '<li><button type="button" class="item-name" data-detail="' + esc(x.item.id) + '">'
+      + esc(x.item.name) + '</button>' + tagsHtml(x.tags) + '<span class="chg-sub">在庫 ' + fmt(x.item.stock) + esc(x.item.unit)
+      + (x.item.expiry ? '・期限 ' + esc(x.item.expiry) : '') + '</span></li>').join('')
+    + '</ul>' + (attention.length > 30 ? '<p class="note">ほか ' + (attention.length - 30) + ' 件</p>' : '');
+
+  $('stock-list').innerHTML = list.length ? list.map(itemCardHtml).join('')
+    : '<p class="empty">' + (data.items.length ? '条件に合う資材がありません。' : '資材が登録されていません。「＋ 資材を登録」から登録してください。') + '</p>';
+}
+
+function chgText(value) {
+  if (value === null || value === undefined) return '—';
+  return (value > 0.05 ? '↑' : value < -0.05 ? '↓' : '→') + pctPlain(value) + '%';
+}
+
+function tile(label, value, sub) {
+  return '<div class="tile"><div class="tile-label">' + esc(label) + '</div><div class="tile-value">' + value
+    + '</div><div class="tile-sub">' + (sub || '') + '</div></div>';
+}
+
+function itemCardHtml(item) {
+  const stock = num(item.stock) || 0;
+  const tags = itemTags(item);
+  const keys = tags.map((t) => t.key);
+  const c = compareItem(item, new Date().getFullYear());
+  const unit = esc(item.unit);
+  let trend = '<span class="chg-sub">購入記録なし</span>';
+  if (c.hasData) {
+    trend = '前年比 ' + chg(c.yoy) + (c.by !== new Date().getFullYear() ? '<span class="chg-sub">（' + c.by + '年）</span>' : '')
+      + (c.series ? '<div class="chg-sub">全国 ' + chgText(c.pubYoy) + '</div>' : '');
+  }
+  return '<div class="item-card' + (keys.indexOf('out') >= 0 ? ' is-out' : keys.indexOf('low') >= 0 ? ' is-low' : '') + '" data-id="' + esc(item.id) + '">'
+    + '<div><button type="button" class="item-name" data-act="detail">' + esc(item.name) + '</button>'
+    + '<div class="item-tags"><span class="badge">' + esc(item.category) + '</span>' + tagsHtml(tags)
+    + (item.supplier ? '<span class="chg-sub">' + esc(item.supplier) + '</span>' : '')
+    + (manualsOf(item.id).length ? '<span class="badge" title="取扱説明書">📎 ' + manualsOf(item.id).length + '</span>' : '') + '</div>'
+    + (item.purpose ? '<div class="chg-sub">用途：' + esc(item.purpose) + '</div>' : '')
+    + (item.memo ? '<div class="chg-sub">' + esc(item.memo) + '</div>' : '') + '</div>'
+    + '<div class="item-money"><div class="item-total">' + yen(stock * (num(item.price) || 0)) + '</div>'
+    + '<div class="item-price">' + yen(num(item.price)) + (unit ? ' / ' + unit : '') + '</div>'
+    + '<div class="item-trend">' + trend + '</div></div>'
+    + '<div class="item-actions"><div class="stepper">'
+    + '<button type="button" data-act="dec" aria-label="在庫を1減らす">−</button>'
+    + '<span class="stock">' + fmt(stock) + unit + '</span>'
+    + '<button type="button" data-act="inc" aria-label="在庫を1増やす">＋</button></div>'
+    + '<div class="item-buttons"><button type="button" class="btn btn-small" data-act="in">入庫</button>'
+    + '<button type="button" class="btn btn-small" data-act="out">出庫</button>'
+    + '<button type="button" class="btn btn-small" data-act="edit">編集</button></div></div></div>';
+}
+
+// ＋／−ボタン：先に画面に反映し、保存は裏で行う
+async function quickAdjust(id, delta) {
+  const item = findItem(id);
+  if (!item) return;
+  const before = num(item.stock) || 0;
+  const after = Math.max(0, before + delta);
+  if (after === before) return;
+  const d = after - before;
+  item.stock = after;
+  pendingDelta[id] = (pendingDelta[id] || 0) + d;
+  invalidate();
+  renderAll();
+  try {
+    const res = await save('moveStock', [id, '調整', { delta: d }]);
+    pendingDelta[id] -= d;
+    if (res && res.item) res.item.stock = (num(res.item.stock) || 0) + pendingDelta[id];
+    applyResult(res);
+  } catch (e) {
+    pendingDelta[id] -= d;
+    const cur = findItem(id);
+    if (cur) cur.stock = Math.max(0, (num(cur.stock) || 0) - d);
+    invalidate();
+    renderAll();
+  }
+}
+
+// ===== 価格タブ =====
+function renderPrice() {
+  const year = ui.priceYear;
+  const items = data.items;
+  const comps = items.map((i) => compareItem(i, year));
+  const withYoy = comps.filter((c) => c.yoy !== null && c.yoy !== undefined);
+  const cost = costChange(year);
+  const total = getDerived().pubMap.get('idx:農業生産資材総合');
+  const top = withYoy.slice().sort((a, b) => b.yoy - a.yoy)[0];
+
+  $('price-tiles').innerHTML = [
+    tile('資材費の変動率（' + year + '年・前年比）', chg(cost.pct), cost.n ? cost.n + '品目で計算' : '前年と両方の購入記録が必要'),
+    tile('全国の資材価格（総合・前年比）', chg(publicChange(total, year, 1)), total ? '3年前比 ' + chgText(publicChange(total, year, 3)) : '全国データ未取得'),
+    tile('値上がり／値下がりした資材', withYoy.filter((c) => c.yoy >= 0.05).length + ' ／ ' + withYoy.filter((c) => c.yoy <= -0.05).length, '前年比が出せる ' + withYoy.length + ' 品目中'),
+    tile('いちばん上がった資材', top ? esc(top.item.name) : '—', top ? chg(top.yoy) : ''),
+  ].join('');
+
+  // 初めて開いたときは、データが2年以上ある資材を自動で選ぶ
+  if (!ui.chartTouched) {
+    ui.chartSel = sortedItems(items)
+      .filter((i) => Object.keys(getDerived().yearStats.get(i.id) || {}).length >= 2)
+      .slice(0, 3).map((i, n) => ({ id: i.id, slot: n }));
+  }
+  ui.chartSel = ui.chartSel.filter((s) => findItem(s.id));
+
+  renderPriceTable(comps);
+  renderPriceChart();
+  renderCategoryChange();
+  renderIndexChart();
+}
+
+function filteredComps(comps) {
+  const q = $('price-search').value.trim().toLowerCase();
+  const cat = $('price-category').value;
+  const sort = $('price-sort').value;
+  const list = comps.filter((c) => (!cat || c.item.category === cat) && (!q || String(c.item.name).toLowerCase().indexOf(q) >= 0));
+  const key = { 'yoy-desc': 'yoy', 'yoy-asc': 'yoy', 'r3-desc': 'r3', 'gap-desc': 'gap' }[sort];
+  if (!key) return sortedItems(list.map((c) => c.item)).map((i) => list.find((c) => c.item === i));
+  const dir = sort === 'yoy-asc' ? 1 : -1;
+  return list.slice().sort((a, b) => {
+    const va = a[key];
+    const vb = b[key];
+    if (va === null || va === undefined) return 1;
+    if (vb === null || vb === undefined) return -1;
+    return (va - vb) * dir;
+  });
+}
+
+function renderPriceTable(comps) {
+  const year = ui.priceYear;
+  const list = filteredComps(comps);
+  const head = '<thead><tr><th>グラフ</th><th class="sticky-col">資材名</th><th class="num">3年前</th><th class="num">2年前</th>'
+    + '<th class="num">前年</th><th class="num">基準年</th><th class="num">前年比</th><th class="num">3年前比</th>'
+    + '<th class="num">年平均の変動</th><th class="num">全国 前年比</th><th class="num">全国 3年前比</th><th class="num">全国との差</th></tr></thead>';
+  const rows = list.map((c) => {
+    const sel = ui.chartSel.find((s) => s.id === c.item.id);
+    const swatch = sel ? '<span class="swatch" style="background:' + seriesColor(sel.slot) + '"></span>' : '';
+    const nameCell = '<td class="sticky-col"><button type="button" class="item-name" data-detail="' + esc(c.item.id) + '">' + esc(c.item.name) + '</button>'
+      + '<div class="chg-sub">' + esc(c.item.category) + (c.hasData && c.by !== year ? '・' + c.by + '年が基準' : '') + (c.series ? '・全国：' + esc(publicLabel(c.series)) : '') + '</div></td>';
+    const check = '<td><label class="inline">' + '<input type="checkbox" data-chart="' + esc(c.item.id) + '"' + (sel ? ' checked' : '') + (c.hasData ? '' : ' disabled') + '>' + swatch + '</label></td>';
+    if (!c.hasData) return '<tr>' + check + nameCell + '<td colspan="10" class="chg-sub">購入記録がありません（入庫か「過去の購入」を記録してください）</td></tr>';
+    const gap = c.gap === null || c.gap === undefined ? '<span class="chg na">—</span>'
+      : '<span class="chg ' + (c.gap > 0.05 ? 'up' : c.gap < -0.05 ? 'down' : 'flat') + '">' + pctPlain(c.gap) + 'pt</span>';
+    return '<tr>' + check + nameCell
+      + '<td class="num">' + yen(c.y3) + '</td><td class="num">' + yen(c.y2) + '</td><td class="num">' + yen(c.prev) + '</td>'
+      + '<td class="num"><b>' + yen(c.cur) + '</b></td>'
+      + '<td class="num">' + (c.prev ? chg(c.yoy) : '<span class="chg-sub">' + (c.by - 1) + '年のデータなし</span>') + '</td>'
+      + '<td class="num">' + (c.y3 ? chg(c.r3) : '<span class="chg-sub">' + (c.by - 3) + '年のデータなし</span>') + '</td>'
+      + '<td class="num">' + (c.cagr === null || c.cagr === undefined ? '<span class="chg na">—</span>' : '<span class="chg-sub">毎年 ' + pctPlain(c.cagr) + '%</span>') + '</td>'
+      + '<td class="num">' + chg(c.pubYoy) + '</td><td class="num">' + chg(c.pub3) + '</td><td class="num">' + gap + '</td></tr>';
+  }).join('');
+  $('price-table').innerHTML = head + '<tbody>' + (rows || '<tr><td colspan="12" class="empty">資材がありません。</td></tr>') + '</tbody>';
+}
+
+function toggleSelection(listName, key, idName) {
+  const list = ui[listName];
+  const i = list.findIndex((s) => s[idName] === key);
+  if (i >= 0) {
+    list.splice(i, 1);
+    return true;
+  }
+  if (list.length >= MAX_SERIES) {
+    toast('グラフに表示できるのは' + MAX_SERIES + 'つまでです。', true);
+    return false;
+  }
+  // 使われていない色の番号を割り当てる（ほかの線の色は変えない）
+  let slot = 0;
+  while (list.some((s) => s.slot === slot)) slot++;
+  const entry = { slot: slot };
+  entry[idName] = key;
+  list.push(entry);
+  return true;
+}
+
+// Chart.js の共通設定
+function baseChartOptions(yTitle, yFormat) {
+  const text2 = cssVar('--text-2');
+  const grid = cssVar('--grid');
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    interaction: { mode: 'nearest', intersect: false },
+    plugins: {
+      legend: { position: 'bottom', labels: { color: text2, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+      tooltip: { callbacks: {} },
+    },
+    scales: {
+      x: { grid: { color: grid }, ticks: { color: text2 } },
+      y: { grid: { color: grid }, ticks: { color: text2, callback: yFormat }, title: { display: !!yTitle, text: yTitle, color: text2 } },
+    },
+  };
+}
+
+function drawChart(name, canvasId, config) {
+  if (charts[name]) charts[name].destroy();
+  charts[name] = null;
+  if (typeof Chart === 'undefined') return;
+  charts[name] = new Chart($(canvasId), config);
+}
+
+function withAlpha(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+/**
+ * 価格推移のデータセットを作る
+ * mode = 'yen'：年平均単価（線）と各購入（点）
+ * mode = 'index'：最初の年＝100にそろえた自分の価格（実線）と全国の値（点線）
+ */
+function priceDatasets(selection, mode, lastYear) {
+  const d = getDerived();
+  let minYear = lastYear;
+  selection.forEach((s) => {
+    Object.keys(d.yearStats.get(s.id) || {}).map(Number).forEach((y) => { if (y < minYear) minYear = y; });
+  });
+  minYear = Math.max(minYear, lastYear - 9);
+  const years = [];
+  for (let y = minYear; y <= lastYear; y++) years.push(y);
+
+  const datasets = [];
+  const usedPublic = new Set();
+  selection.forEach((s) => {
+    const item = findItem(s.id);
+    if (!item) return;
+    const color = seriesColor(s.slot);
+    const ys = d.yearStats.get(item.id) || {};
+    const own = years.filter((y) => ys[y]).map((y) => ({ x: y, y: ys[y].avg }));
+    if (!own.length) return;
+
+    if (mode === 'yen') {
+      datasets.push({ type: 'line', label: item.name, data: own, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0 });
+      const points = (d.purchases.get(item.id) || []).filter((p) => p.year >= minYear && p.year <= lastYear).map((p) => ({
+        x: p.year + (p.month ? (p.month - 6.5) / 12 * 0.8 : 0), y: p.price, p: p, unit: item.unit,
+      }));
+      datasets.push({ type: 'scatter', label: item.name + '（各購入）', data: points, backgroundColor: withAlpha(color, 0.35), borderColor: color, borderWidth: 1, pointRadius: 3, pointHoverRadius: 5, isPoints: true });
+    } else {
+      const base = own[0];
+      datasets.push({ type: 'line', label: item.name, data: own.map((o) => ({ x: o.x, y: base.y ? o.y / base.y * 100 : null })), borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 4, pointHoverRadius: 6 });
+      const series = publicSeriesFor(item);
+      if (series && !usedPublic.has(series.key)) {
+        usedPublic.add(series.key);
+        const pubBase = publicYearAvg(series, base.x);
+        const pub = years.filter((y) => y >= base.x).map((y) => ({ x: y, y: pubBase ? publicYearAvg(series, y) / pubBase * 100 : null })).filter((o) => o.y);
+        if (pub.length) {
+          datasets.push({ type: 'line', label: '全国：' + publicLabel(series), data: pub, borderColor: color, backgroundColor: color, borderDash: [6, 4], borderWidth: 2, pointRadius: 3, pointStyle: 'rectRot' });
+        }
+      }
+    }
+  });
+  return { datasets: datasets, minYear: minYear, maxYear: lastYear };
+}
+
+function priceChartConfig(built, mode) {
+  const options = baseChartOptions(mode === 'yen' ? '円' : '指数', mode === 'yen' ? (v) => '¥' + Number(v).toLocaleString('ja-JP') : (v) => v);
+  options.scales.x = Object.assign(options.scales.x, {
+    type: 'linear', min: built.minYear - 0.5, max: built.maxYear + 0.5,
+    ticks: Object.assign(options.scales.x.ticks, { stepSize: 1, callback: (v) => (Number.isInteger(v) ? v + '年' : '') }),
+  });
+  options.plugins.legend.labels.filter = (item, chartData) => !chartData.datasets[item.datasetIndex].isPoints;
+  options.plugins.tooltip.callbacks.title = (items) => {
+    const raw = items[0].raw;
+    return raw.p ? raw.p.date : Math.round(items[0].parsed.x) + '年';
+  };
+  options.plugins.tooltip.callbacks.label = (ctx) => {
+    const raw = ctx.raw;
+    if (raw.p) return ctx.dataset.label.replace('（各購入）', '') + '：' + yen(raw.p.price) + ' × ' + fmt(raw.p.qty) + esc(raw.unit || '') + (raw.p.h.supplier ? '（' + raw.p.h.supplier + '）' : '');
+    return ctx.dataset.label + '：' + (mode === 'yen' ? yen(ctx.parsed.y) + '（年平均）' : ctx.parsed.y.toFixed(1));
+  };
+  return { data: { datasets: built.datasets }, options: options };
+}
+
+function renderPriceChart() {
+  document.querySelectorAll('#chart-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === ui.chartMode));
+  const empty = $('price-chart-empty');
+  if (!ui.chartSel.length) {
+    drawChart('price', 'price-chart', { type: 'line', data: { datasets: [] }, options: baseChartOptions() });
+    empty.hidden = false;
+    empty.textContent = '下の一覧表で ☑ を付けると、その資材の価格推移を表示します。';
+    return;
+  }
+  empty.hidden = true;
+  const built = priceDatasets(ui.chartSel, ui.chartMode, ui.priceYear);
+  drawChart('price', 'price-chart', Object.assign({ type: 'line' }, priceChartConfig(built, ui.chartMode)));
+}
+
+function renderCategoryChange() {
+  const year = ui.priceYear;
+  const years = [year - 2, year - 1, year];
+  const groups = data.categories.map((c) => ({ label: c.name, fn: (i) => i.category === c.name }));
+  groups.push({ label: '全体', fn: () => true });
+  const table = groups.map((g) => ({ label: g.label, values: years.map((y) => costChange(y, g.fn)) }))
+    .filter((r) => r.values.some((v) => v.pct !== null));
+
+  const colors = [cssVar('--ordinal-1'), cssVar('--ordinal-2'), cssVar('--ordinal-3')];
+  const options = baseChartOptions('前年比（%）', (v) => v + '%');
+  options.interaction = { mode: 'index', intersect: false };
+  options.plugins.tooltip.callbacks.label = (ctx) => {
+    const v = table[ctx.dataIndex].values[ctx.datasetIndex];
+    return years[ctx.datasetIndex] + '年：' + (v.pct === null ? 'データなし' : pctPlain(v.pct) + '%（' + v.n + '品目）');
+  };
+  drawChart('category', 'category-chart', {
+    type: 'bar',
+    data: {
+      labels: table.map((r) => r.label),
+      datasets: years.map((y, i) => ({
+        label: y + '年', data: table.map((r) => r.values[i].pct), backgroundColor: colors[i],
+        borderRadius: 4, borderSkipped: false, maxBarThickness: 28,
+      })),
+    },
+    options: options,
+  });
+
+  $('category-table').innerHTML = '<thead><tr><th>カテゴリ</th>' + years.map((y) => '<th class="num">' + y + '年</th>').join('') + '</tr></thead><tbody>'
+    + (table.length ? table.map((r) => '<tr' + (r.label === '全体' ? ' class="total"' : '') + '><td>' + esc(r.label) + '</td>'
+      + r.values.map((v) => '<td class="num">' + chg(v.pct) + (v.n ? '<div class="chg-sub">' + v.n + '品目</div>' : '') + '</td>').join('') + '</tr>').join('')
+      : '<tr><td colspan="4" class="empty">2年続けて購入記録がある資材がまだありません。</td></tr>') + '</tbody>';
+}
+
+function renderIndexChart() {
+  const idx = data.publicData.filter((p) => p.kind === 'idx');
+  const s = data.settings;
+  $('public-status').textContent = s.publicLatestPeriod ? '最新：' + s.publicLatestPeriod.replace('-', '年') + '月分' : '';
+  $('index-empty').hidden = idx.length > 0;
+  $('index-chips').innerHTML = idx.map((p) => {
+    const sel = ui.indexSel.find((x) => x.key === p.key);
+    return '<button type="button" class="chip' + (sel ? ' active' : '') + '" data-index="' + esc(p.key) + '" aria-pressed="' + !!sel + '">'
+      + (sel ? '<span class="swatch" style="background:' + seriesColor(sel.slot) + '"></span>' : '') + esc(p.name) + '</button>';
+  }).join('');
+  if (!idx.length) {
+    drawChart('index', 'index-chart', { type: 'line', data: { datasets: [] }, options: baseChartOptions() });
+    return;
+  }
+
+  const startYear = ui.priceYear - 3;
+  const periods = new Set();
+  idx.forEach((p) => Object.keys(p.data).forEach((k) => { if (Number(k.slice(0, 4)) >= startYear) periods.add(k); }));
+  const labels = Array.from(periods).sort();
+  const selected = ui.indexSel.map((x) => ({ sel: x, p: getDerived().pubMap.get(x.key) })).filter((x) => x.p);
+
+  const options = baseChartOptions('指数（2020年＝100）', (v) => v);
+  options.interaction = { mode: 'index', intersect: false };
+  options.scales.x.ticks.maxTicksLimit = 12;
+  options.plugins.tooltip.callbacks.label = (ctx) => {
+    const p = selected[ctx.datasetIndex].p;
+    const period = labels[ctx.dataIndex];
+    return p.name + '：' + ctx.parsed.y + ((p.prov || []).indexOf(period) >= 0 ? '（速報）' : '');
+  };
+  drawChart('index', 'index-chart', {
+    type: 'line',
+    data: {
+      labels: labels.map((k) => k.slice(0, 4) + '/' + Number(k.slice(5))),
+      datasets: selected.map((x) => ({
+        label: x.p.name, data: labels.map((k) => (x.p.data[k] === undefined ? null : x.p.data[k])),
+        borderColor: seriesColor(x.sel.slot), backgroundColor: seriesColor(x.sel.slot), borderWidth: 2,
+        pointRadius: 0, pointHoverRadius: 5, spanGaps: true,
+      })),
+    },
+    options: options,
+  });
+}
+
+// ===== 履歴タブ =====
+function historyMatches(h) {
+  const itemId = $('history-item').value;
+  const period = $('history-period').value;
+  const type = $('history-type').value;
+  if (itemId && h.itemId !== itemId) return false;
+  if (type === 'purchase' ? PURCHASE_TYPES.indexOf(h.type) < 0 : type && h.type !== type) return false;
+  if (period !== 'all') {
+    const now = new Date();
+    const date = String(h.date || h.timestamp || '');
+    const ym = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1);
+    if (period === 'thisMonth' && date.slice(0, 7) !== ym(now)) return false;
+    if (period === 'lastMonth' && date.slice(0, 7) !== ym(new Date(now.getFullYear(), now.getMonth() - 1, 1))) return false;
+    if (period === 'thisYear' && date.slice(0, 4) !== String(now.getFullYear())) return false;
+    if (period === 'lastYear' && date.slice(0, 4) !== String(now.getFullYear() - 1)) return false;
+  }
+  return true;
+}
+
+function historyRowHtml(h) {
+  const item = findItem(h.itemId);
+  const unit = item ? item.unit : '';
+  const qty = num(h.qty);
+  const cancelled = isCancelled(h);
+  let main = '<b>' + esc(h.type) + '</b> ' + esc(h.itemName);
+  if (qty !== null && h.type !== '編集' && h.type !== '登録') {
+    main += ' ' + (h.type === '過去の購入' ? '' : qty > 0 ? '+' : '') + fmt(qty) + esc(unit);
+  }
+  if (h.type === '登録') main += ' 在庫 ' + fmt(qty) + esc(unit);
+  if (num(h.stockAfter) !== null && h.type !== '過去の購入') main += '<span class="chg-sub"> → 在庫 ' + fmt(h.stockAfter) + esc(unit) + '</span>';
+  if (cancelled) main += ' <span class="badge">取消済み</span>';
+
+  const isPurchase = PURCHASE_TYPES.indexOf(h.type) >= 0;
+  const amount = isPurchase ? yen(num(h.amount)) + '<div class="chg-sub">@' + yen(num(h.unitPrice)) + '</div>' : '';
+  const meta = [
+    isPurchase ? '購入日 ' + esc(h.date) : esc(String(h.timestamp).slice(0, 16)),
+    esc(userName(h.user)),
+    h.supplier && isPurchase ? esc(h.supplier) : '',
+    h.memo ? esc(h.memo) : '',
+    isPurchase ? '記録 ' + esc(String(h.timestamp).slice(0, 16)) : '',
+  ].filter(Boolean).join('・');
+  const canCancel = CANCELABLE_TYPES.indexOf(h.type) >= 0 && !cancelled;
+  return '<div class="history-row' + (cancelled ? ' is-cancelled' : '') + '">'
+    + '<div class="history-main">' + main + '</div><div class="history-amount">' + amount + '</div>'
+    + '<div class="history-meta">' + meta + '</div>'
+    + '<div>' + (canCancel ? '<button type="button" class="btn btn-small" data-cancel="' + esc(h.id) + '">取消</button>' : '') + '</div></div>';
+}
+
+function renderHistory() {
+  const list = data.history.filter(historyMatches)
+    .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+  $('history-list').innerHTML = list.length
+    ? list.slice(0, ui.historyLimit).map(historyRowHtml).join('')
+      + (list.length > ui.historyLimit ? '<div class="list-foot"><button type="button" class="btn" id="history-more">さらに表示（残り ' + (list.length - ui.historyLimit) + ' 件）</button></div>' : '')
+    : '<p class="empty">記録がありません。</p>';
+}
+
+async function cancelRecord(id) {
+  const h = data.history.find((x) => x.id === id);
+  if (!h) return;
+  const ok = await askConfirm('「' + h.itemName + '」の' + h.type + '（' + h.date + '）を取り消しますか？'
+    + (h.type === '過去の購入' ? '' : '\n在庫も元に戻します。') + '\n記録は「取消済み」として残ります。', '取り消す');
+  if (!ok) return;
+  try {
+    applyResult(await save('cancelHistory', [id]));
+    toast('取り消しました。');
+    refreshDetailIfOpen();
+  } catch (e) { /* save() でお知らせ済み */ }
+}
+
+function refreshDetailIfOpen() {
+  if (!$('modal').hidden && $('modal').dataset.detail) openDetail($('modal').dataset.detail);
+}
+
+// ===== 説明書タブ =====
+function manualList() {
+  return (data && data.manuals) || [];
+}
+
+function manualsOf(itemId) {
+  return manualList().filter((m) => m.itemId === itemId)
+    .sort((a, b) => String(a.uploadedAt).localeCompare(String(b.uploadedAt)));
+}
+
+function sizeText(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + 'MB';
+  return Math.max(1, Math.round(n / 1024)) + 'KB';
+}
+
+function fileCardHtml(m) {
+  const isImg = String(m.mimeType).indexOf('image/') === 0;
+  // 画像はドライブの縮小画像を表示し、表示できなければ絵文字にする
+  const thumb = isImg
+    ? '<img src="https://drive.google.com/thumbnail?id=' + encodeURIComponent(m.fileId) + '&sz=w320" alt="" loading="lazy" onerror="this.parentNode.textContent=\'🖼\'">'
+    : '📄';
+  const url = /^https:\/\//.test(m.url) ? m.url : '#';
+  return '<div class="file-card" data-manual="' + esc(m.id) + '">'
+    + '<a class="file-thumb" href="' + esc(url) + '" target="_blank" rel="noopener" aria-label="' + esc(m.title) + 'を開く">' + thumb + '</a>'
+    + '<div class="file-info"><div class="file-title">' + esc(m.title) + '</div>'
+    + '<div class="file-meta">' + (isImg ? '画像' : 'PDF') + '・' + sizeText(m.size) + '・' + esc(userName(m.uploadedBy)) + '・' + esc(String(m.uploadedAt).slice(0, 10)) + '</div></div>'
+    + '<div class="file-actions"><a class="btn" href="' + esc(url) + '" target="_blank" rel="noopener">開く</a>'
+    + '<button type="button" class="btn" data-manual-act="rename">表題</button>'
+    + '<button type="button" class="btn btn-danger" data-manual-act="delete">削除</button></div></div>';
+}
+
+function renderManual() {
+  const manuals = manualList();
+  const q = $('manual-search').value.trim().toLowerCase();
+  const cat = $('manual-category').value;
+  const filter = $('manual-filter').value;
+  $('manual-not-ready').hidden = !!data.manualReady;
+
+  const withManual = data.items.filter((i) => manualsOf(i.id).length).length;
+  $('manual-tiles').innerHTML = [
+    tile('登録した説明書', manuals.length + ' 件', ''),
+    tile('説明書がある資材', withManual + ' 品目', '全 ' + data.items.length + ' 品目中'),
+    tile('説明書がない資材', (data.items.length - withManual) + ' 品目', ''),
+    tile('用途が未入力', data.items.filter((i) => !i.purpose).length + ' 品目', ''),
+  ].join('');
+
+  const list = sortedItems(data.items.filter((item) => {
+    const files = manualsOf(item.id);
+    if (cat && item.category !== cat) return false;
+    if (filter === 'has' && !files.length) return false;
+    if (filter === 'none' && files.length) return false;
+    if (filter === 'nopurpose' && item.purpose) return false;
+    if (q) {
+      const text = (item.name + ' ' + (item.purpose || '') + ' ' + files.map((f) => f.title + ' ' + f.fileName).join(' ')).toLowerCase();
+      if (text.indexOf(q) < 0) return false;
+    }
+    return true;
+  }));
+
+  let html = list.map((item) => {
+    const files = manualsOf(item.id);
+    return '<div class="manual-item" data-id="' + esc(item.id) + '"><div class="manual-head"><div>'
+      + '<button type="button" class="item-name" data-detail="' + esc(item.id) + '">' + esc(item.name) + '</button> '
+      + '<span class="badge">' + esc(item.category) + '</span></div><div class="item-buttons">'
+      + '<button type="button" class="btn btn-small" data-manual-add>＋ 説明書</button>'
+      + '<button type="button" class="btn btn-small" data-purpose-edit>用途を編集</button></div></div>'
+      + '<p class="purpose' + (item.purpose ? '' : ' empty-purpose') + '"><span class="purpose-label">用途</span>' + (item.purpose ? esc(item.purpose) : '未入力') + '</p>'
+      + (files.length ? '<div class="files">' + files.map(fileCardHtml).join('') + '</div>' : '<p class="note">説明書はまだありません。</p>')
+      + '</div>';
+  }).join('');
+
+  // 削除した資材の説明書も、消さずに残しておく
+  const ids = new Set(data.items.map((i) => i.id));
+  const orphans = manuals.filter((m) => !ids.has(m.itemId)
+    && (!q || (m.itemName + ' ' + m.title).toLowerCase().indexOf(q) >= 0));
+  if (orphans.length && !cat && filter !== 'none' && filter !== 'nopurpose') {
+    html += '<div class="manual-item"><div class="manual-head"><b>削除した資材の説明書</b></div>'
+      + '<div class="files">' + orphans.map((m) => fileCardHtml(Object.assign({}, m, { title: m.itemName + '：' + m.title }))).join('') + '</div></div>';
+  }
+  $('manual-list').innerHTML = html || '<p class="empty">条件に合う資材がありません。</p>';
+}
+
+// ----- 説明書の登録 -----
+function readAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('ファイルを読み込めませんでした。'));
+    r.readAsDataURL(blob);
+  });
+}
+
+// 大きな写真は、長い辺2000pxのJPEGに縮小して容量を抑える
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 2000 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('縮小に失敗しました。'))), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('画像を読み込めませんでした。'));
+    };
+    img.src = url;
+  });
+}
+
+async function prepareUpload(file) {
+  let blob = file;
+  let name = file.name || 'file';
+  let type = file.type || (/\.pdf$/i.test(name) ? 'application/pdf' : '');
+  if (/^image\/(jpeg|png|webp)$/.test(type) && file.size > 1.5 * 1024 * 1024) {
+    try {
+      const small = await shrinkImage(file);
+      if (small.size < file.size) {
+        blob = small;
+        type = 'image/jpeg';
+        name = name.replace(/\.[^.]+$/, '') + '.jpg';
+      }
+    } catch (e) {
+      // 縮小できなければ元のファイルのまま送る
+    }
+  }
+  if (type !== 'application/pdf' && type.indexOf('image/') !== 0) throw new Error('「' + name + '」はPDFでも画像でもないため登録できません。');
+  if (blob.size > 20 * 1024 * 1024) throw new Error('「' + name + '」は大きすぎます（20MBまで）。');
+  const dataUrl = await readAsDataUrl(blob);
+  return { fileName: name, mimeType: type, base64: String(dataUrl).split(',')[1] };
+}
+
+function openUploadForm(itemId, backToDetail) {
+  const item = findItem(itemId);
+  if (!item) return;
+  openModal('説明書を追加：' + item.name,
+    '<form id="upload-form" class="form-grid" autocomplete="off">'
+    + (data.manualReady ? '' : '<p class="conflict full">説明書の保存フォルダがまだありません。スプレッドシートの所有者が一度アプリを開くと使えるようになります。</p>')
+    + '<label class="field full"><span>ファイル（PDF・画像）<span class="req">必須</span> <small>複数選べます。スマホではカメラで撮影もできます</small></span>'
+    + '<input name="files" type="file" accept="application/pdf,image/*" multiple required></label>'
+    + '<label class="field full"><span>表題 <small>省略するとファイル名になります。複数のときは「表題（1）」のように番号が付きます</small></span><input name="title" maxlength="100" placeholder="例：取扱説明書、使用量の早見表、ラベル写真"></label>'
+    + '<div class="form-actions full"><button type="submit" class="btn btn-primary">登録する</button><button type="button" class="btn" data-close>キャンセル</button></div>'
+    + '<div class="upload-progress full" id="upload-progress" aria-live="polite"></div>'
+    + '<p class="note full">ファイルはGoogleドライブの「資材ノート_取扱説明書」フォルダに保存され、家族とも共有されます。大きな写真は自動で縮小します。</p>'
+    + '</form>');
+
+  const form = $('upload-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const files = Array.prototype.slice.call(form.elements.files.files);
+    if (!files.length) return;
+    const baseTitle = form.elements.title.value.trim();
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    let ok = 0;
+    for (let i = 0; i < files.length; i++) {
+      $('upload-progress').textContent = '登録中… ' + (i + 1) + ' / ' + files.length + '（' + files[i].name + '）';
+      try {
+        const p = await prepareUpload(files[i]);
+        p.itemId = itemId;
+        p.title = baseTitle ? (files.length > 1 ? baseTitle + '（' + (i + 1) + '）' : baseTitle) : '';
+        applyResult(await save('uploadManual', [p]));
+        ok++;
+      } catch (err) {
+        toast(errMsg(err), true);
+      }
+    }
+    btn.disabled = false;
+    $('upload-progress').textContent = ok + '件を登録しました。';
+    if (ok) {
+      toast(ok + '件の説明書を登録しました。');
+      if (backToDetail) openDetail(itemId);
+      else closeModal();
+    }
+  });
+}
+
+// 説明書の表題変更・削除
+function askText(title, value) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.style.zIndex = 70;
+    wrap.innerHTML = '<div class="modal-backdrop"></div><form class="modal-body" role="dialog" aria-modal="true">'
+      + '<label class="field"><span>' + esc(title) + '</span><input name="v" maxlength="100"></label>'
+      + '<div class="form-actions"><button type="submit" class="btn btn-primary">保存</button><button type="button" class="btn" data-ng>キャンセル</button></div></form>';
+    document.body.appendChild(wrap);
+    const form = wrap.querySelector('form');
+    form.elements.v.value = value || '';
+    const done = (v) => { wrap.remove(); resolve(v); };
+    form.addEventListener('submit', (e) => { e.preventDefault(); done(form.elements.v.value); });
+    wrap.querySelector('[data-ng]').onclick = () => done(null);
+    wrap.querySelector('.modal-backdrop').onclick = () => done(null);
+    form.elements.v.focus();
+  });
+}
+
+async function manualAction(id, act) {
+  const m = manualList().find((x) => x.id === id);
+  if (!m) return;
+  try {
+    if (act === 'rename') {
+      const title = await askText('説明書の表題', m.title);
+      if (title === null || !title.trim()) return;
+      applyResult(await save('renameManual', [id, title]));
+      toast('表題を変更しました。');
+    }
+    if (act === 'delete') {
+      if (!(await askConfirm('説明書「' + m.title + '」を削除しますか？\nファイルはGoogleドライブのゴミ箱に移ります（30日以内なら元に戻せます）。', '削除する'))) return;
+      const res = await save('deleteManual', [id]);
+      applyResult(res);
+      toast(res.message || '削除しました。');
+    }
+    refreshDetailIfOpen();
+  } catch (e) { /* save() でお知らせ済み */ }
+}
+
+// ===== 集計タブ =====
+function renderSummary() {
+  const year = ui.summaryYear;
+  const d = getDerived();
+  const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const amount = {};
+  let hasUnknown = false;
+
+  d.purchases.forEach((list) => list.forEach((p) => {
+    if (p.year !== year) return;
+    const cat = p.h.category || 'その他';
+    const key = p.month || 0;
+    if (!p.month) hasUnknown = true;
+    amount[cat] = amount[cat] || {};
+    amount[cat][key] = (amount[cat][key] || 0) + p.price * p.qty;
+  }));
+
+  const cols = months.concat(hasUnknown ? [0] : []);
+  const colLabel = (m) => (m ? m + '月' : '月不明');
+  const cats = data.categories.map((c) => c.name).concat(Object.keys(amount).filter((c) => !data.categories.some((x) => x.name === c)));
+  const rows = cats.filter((c) => amount[c]);
+  const sumRow = (obj) => cols.reduce((s, m) => s + ((obj || {})[m] || 0), 0);
+  const cell = (v) => '<td class="num">' + (v ? Math.round(v).toLocaleString('ja-JP') : '') + '</td>';
+
+  $('summary-amount').innerHTML = '<thead><tr><th class="sticky-col">カテゴリ</th>' + cols.map((m) => '<th class="num">' + colLabel(m) + '</th>').join('') + '<th class="num">合計（円）</th></tr></thead><tbody>'
+    + (rows.length ? rows.map((c) => '<tr><td class="sticky-col">' + esc(c) + '</td>' + cols.map((m) => cell(amount[c][m])).join('') + cell(sumRow(amount[c])) + '</tr>').join('')
+      + '<tr class="total"><td class="sticky-col">合計</td>' + cols.map((m) => cell(rows.reduce((s, c) => s + (amount[c][m] || 0), 0))).join('')
+      + cell(rows.reduce((s, c) => s + sumRow(amount[c]), 0)) + '</tr>'
+      : '<tr><td colspan="15" class="empty">' + year + '年の購入記録はありません。</td></tr>') + '</tbody>';
+
+  // 資材ごとの入庫・出庫数
+  const qty = {};
+  data.history.forEach((h) => {
+    if (isCancelled(h) || String(h.date).slice(0, 4) !== String(year)) return;
+    const isIn = PURCHASE_TYPES.indexOf(h.type) >= 0;
+    if (!isIn && h.type !== '出庫') return;
+    const m = String(h.date).length >= 7 ? Number(String(h.date).slice(5, 7)) : 0;
+    const q = Math.abs(num(h.qty) || 0) || (isIn ? 1 : 0);
+    const r = qty[h.itemId] || (qty[h.itemId] = { name: h.itemName, in: {}, out: {} });
+    const side = isIn ? r.in : r.out;
+    side[m] = (side[m] || 0) + q;
+  });
+  const ids = Object.keys(qty).sort((a, b) => String(qty[a].name).localeCompare(String(qty[b].name), 'ja'));
+  const qCols = months.concat(ids.some((id) => qty[id].in[0] || qty[id].out[0]) ? [0] : []);
+  const qCell = (r, m) => {
+    const a = r.in[m];
+    const b = r.out[m];
+    return '<td class="num">' + (a ? '<div>入 ' + fmt(a) + '</div>' : '') + (b ? '<div class="chg-sub">出 ' + fmt(b) + '</div>' : '') + '</td>';
+  };
+  const total = (side) => Object.keys(side).reduce((s, k) => s + side[k], 0);
+  $('summary-qty').innerHTML = '<thead><tr><th class="sticky-col">資材名</th>' + qCols.map((m) => '<th class="num">' + colLabel(m) + '</th>').join('') + '<th class="num">合計</th></tr></thead><tbody>'
+    + (ids.length ? ids.map((id) => {
+      const r = qty[id];
+      const item = findItem(id);
+      const unit = item ? esc(item.unit) : '';
+      return '<tr><td class="sticky-col">' + esc(r.name) + (unit ? '<div class="chg-sub">単位：' + unit + '</div>' : '') + '</td>'
+        + qCols.map((m) => qCell(r, m)).join('')
+        + '<td class="num"><div>入 ' + fmt(total(r.in)) + '</div><div class="chg-sub">出 ' + fmt(total(r.out)) + '</div></td></tr>';
+    }).join('') : '<tr><td colspan="15" class="empty">' + year + '年の入出庫の記録はありません。</td></tr>') + '</tbody>';
+}
+
+// ===== 設定タブ =====
+function renderSettings() {
+  const s = data.settings;
+  $('me-email').textContent = 'ログイン中：' + data.me + (data.isOwner ? '（所有者）' : '');
+  $('my-name').value = (s.userNames || {})[data.me] || '';
+
+  $('category-list').innerHTML = data.categories.map((c, i) => {
+    const used = data.items.filter((x) => x.category === c.name).length;
+    return '<div class="cat-row" data-cat="' + esc(c.name) + '">'
+      + '<div class="cat-order"><button type="button" data-cat-move="-1" aria-label="上へ"' + (i === 0 ? ' disabled' : '') + '>▲</button>'
+      + '<button type="button" data-cat-move="1" aria-label="下へ"' + (i === data.categories.length - 1 ? ' disabled' : '') + '>▼</button></div>'
+      + '<div class="cat-main"><span class="cat-name">' + esc(c.name) + ' <span class="chg-sub">' + used + '品目</span></span>'
+      + '<button type="button" class="btn btn-small" data-cat-rename>名前の変更</button>'
+      + '<button type="button" class="btn btn-small btn-danger" data-cat-delete>削除</button></div>'
+      + '<label class="cat-public"><span class="chg-sub">比べる全国データ</span><select data-cat-public>' + publicOptions(c.publicRef, false) + '</select></label></div>';
+  }).join('');
+
+  $('set-alert-days').value = s.alertDays;
+  $('set-price-pct').value = s.priceAlertPct;
+  $('set-gap-pts').value = s.gapAlertPts;
+
+  $('owner-note').textContent = data.isOwner ? 'メールはスプレッドシートの所有者と編集者全員に届きます。'
+    : 'この項目を変更できるのは、スプレッドシートの所有者だけです。';
+  let hours = '';
+  for (let h = 0; h < 24; h++) hours += '<option value="' + h + '">' + h + '時</option>';
+  $('set-notify-hour').innerHTML = hours;
+  $('set-notify').checked = !!s.notifyEnabled;
+  $('set-notify-hour').value = String(s.notifyHour);
+  $('set-public-auto').checked = !!s.publicAutoFetch;
+  $('set-public-notify').checked = !!s.publicNotify;
+  $('set-public-url').value = s.publicSourceUrl || '';
+  Array.prototype.forEach.call($('notify-form').elements, (el) => { el.disabled = !data.isOwner; });
+
+  const latest = s.publicLatestPeriod;
+  $('public-info').innerHTML = '<dt>最終取得</dt><dd>' + esc(s.publicLastFetch || 'まだ取得していません') + '</dd>'
+    + '<dt>結果</dt><dd>' + esc(s.publicLastStatus || '—') + '</dd>'
+    + '<dt>最新のデータ</dt><dd>' + (latest ? esc(latest.replace('-', '年')) + '月分' : '—') + '</dd>'
+    + '<dt>系列の数</dt><dd>価格指数 ' + data.publicData.filter((p) => p.kind === 'idx').length + '・品目別価格 ' + data.publicData.filter((p) => p.kind === 'item').length + '</dd>';
+  $('app-url').value = data.appUrl || '';
+}
+
+// ===== 小窓（モーダル） =====
+function openModal(title, html, options) {
+  const modal = $('modal');
+  $('modal-title').textContent = title;
+  $('modal-content').innerHTML = html;
+  modal.dataset.detail = (options && options.detail) || '';
+  modal.hidden = false;
+  document.body.style.overflow = 'hidden';
+  const first = $('modal-content').querySelector('input:not([type=hidden]), select, textarea');
+  if (first && !(options && options.noFocus)) first.focus({ preventScroll: true });
+}
+
+function closeModal() {
+  $('modal').hidden = true;
+  $('modal').dataset.detail = '';
+  document.body.style.overflow = '';
+  if (charts.detail) {
+    charts.detail.destroy();
+    charts.detail = null;
+  }
+}
+
+// 確認の小窓（ブラウザの confirm は使わない）
+function askConfirm(message, okLabel) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.style.zIndex = 70;
+    wrap.innerHTML = '<div class="modal-backdrop"></div><div class="modal-body" role="alertdialog" aria-modal="true">'
+      + '<p style="white-space:pre-wrap">' + esc(message) + '</p><div class="form-actions">'
+      + '<button type="button" class="btn btn-primary" data-ok>' + esc(okLabel || 'OK') + '</button>'
+      + '<button type="button" class="btn" data-ng>キャンセル</button></div></div>';
+    document.body.appendChild(wrap);
+    const done = (v) => { wrap.remove(); resolve(v); };
+    wrap.querySelector('[data-ok]').onclick = () => done(true);
+    wrap.querySelector('[data-ng]').onclick = () => done(false);
+    wrap.querySelector('.modal-backdrop').onclick = () => done(false);
+    wrap.querySelector('[data-ok]').focus();
+  });
+}
+
+function datalist(id, values) {
+  return '<datalist id="' + id + '">' + values.map((v) => '<option value="' + esc(v) + '">').join('') + '</datalist>';
+}
+
+// ----- 資材の登録・編集 -----
+function openItemForm(id) {
+  const item = id ? findItem(id) : null;
+  const v = item || { name: '', category: data.categories[0] ? data.categories[0].name : '', unit: '', stock: 0, price: 0, reorderLevel: '', expiry: '', supplier: '', memo: '', publicRef: '', purpose: '' };
+  let expected = item ? item.updatedAt : '';
+
+  openModal(item ? '資材を編集' : '資材を登録',
+    '<form id="item-form" class="form-grid" autocomplete="off">'
+    + '<div class="conflict full" id="conflict-box" hidden></div>'
+    + '<label class="field full"><span>資材名<span class="req">必須</span></span><input name="name" required maxlength="100" placeholder="例：化成肥料 8-8-8 20kg"></label>'
+    + '<label class="field half"><span>カテゴリ</span><select name="category">' + categoryOptions(v.category) + '</select></label>'
+    + '<label class="field half"><span>単位</span><input name="unit" list="unit-list" maxlength="20" placeholder="例：袋"></label>'
+    + '<label class="field"><span>在庫数</span><input name="stock" type="number" min="0" step="any" inputmode="decimal"></label>'
+    + '<label class="field"><span>単価（円）</span><input name="price" type="number" min="0" step="any" inputmode="decimal"></label>'
+    + '<div class="field half"><span>合計金額（自動計算）</span><output class="calc" id="item-total">¥0</output></div>'
+    + '<label class="field half"><span>発注の目安 <small>この数以下で「残りわずか」</small></span><input name="reorderLevel" type="number" min="0" step="any" inputmode="decimal" placeholder="空欄なら知らせない"></label>'
+    + '<label class="field half"><span>使用期限</span><input name="expiry" type="date"></label>'
+    + '<label class="field half"><span>購入先</span><input name="supplier" list="supplier-list" maxlength="100" placeholder="例：JA"></label>'
+    + '<label class="field half"><span>比べる全国データ</span><select name="publicRef">' + publicOptions(v.publicRef, true) + '</select></label>'
+    + '<label class="field full"><span>用途 <small>何のために使うか</small></span><textarea name="purpose" rows="2" maxlength="1000" placeholder="例：トマトの元肥。10aあたり4袋"></textarea></label>'
+    + '<label class="field full"><span>メモ</span><textarea name="memo" rows="2" maxlength="1000"></textarea></label>'
+    + '<div class="form-actions full"><button type="submit" class="btn btn-primary">' + (item ? '更新する' : '登録する') + '</button>'
+    + (item ? '<button type="button" class="btn btn-danger" id="delete-item">削除</button>' : '')
+    + '<button type="button" class="btn" data-close>キャンセル</button></div>'
+    + (item ? '' : '<p class="note full">登録したときの在庫は、購入金額や価格の計算には入りません。価格の履歴は「入庫」や「過去の購入」で記録します。</p>')
+    + '</form>' + datalist('unit-list', UNIT_CANDIDATES) + datalist('supplier-list', suppliers()));
+
+  const form = $('item-form');
+  const fill = (src) => {
+    ['name', 'unit', 'stock', 'price', 'reorderLevel', 'expiry', 'supplier', 'memo', 'purpose'].forEach((k) => { form.elements[k].value = src[k] === null || src[k] === undefined ? '' : src[k]; });
+    form.elements.category.value = src.category;
+    form.elements.publicRef.value = src.publicRef || '';
+    updateTotal();
+  };
+  const updateTotal = () => {
+    $('item-total').textContent = yen((Number(form.elements.stock.value) || 0) * (Number(form.elements.price.value) || 0));
+  };
+  form.elements.stock.addEventListener('input', updateTotal);
+  form.elements.price.addEventListener('input', updateTotal);
+  fill(v);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = { id: item ? item.id : '' };
+    ['name', 'category', 'unit', 'stock', 'price', 'reorderLevel', 'expiry', 'supplier', 'memo', 'publicRef', 'purpose'].forEach((k) => { payload[k] = form.elements[k].value; });
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      const res = await save('saveItem', [payload, expected]);
+      if (res.conflict) {
+        // ほかの人が先に更新していた
+        expected = res.item.updatedAt;
+        applyResult({ item: res.item });
+        const box = $('conflict-box');
+        box.hidden = false;
+        box.textContent = userName(res.item.updatedBy) + 'さんが ' + String(res.item.updatedAt).slice(5, 16) + ' に先に更新しています。最新の内容を表示しました。確認してから、もう一度保存してください。';
+        fill(res.item);
+        return;
+      }
+      applyResult(res);
+      closeModal();
+      toast(item ? '更新しました。' : '登録しました。');
+    } catch (err) {
+      // save() でお知らせ済み
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  if (item) {
+    $('delete-item').addEventListener('click', async () => {
+      if (!(await askConfirm('「' + item.name + '」を削除しますか？\n価格の履歴は残ります。', '削除する'))) return;
+      try {
+        applyResult(await save('deleteItem', [item.id]));
+        closeModal();
+        toast('削除しました。');
+      } catch (err) { /* save() でお知らせ済み */ }
+    });
+  }
+}
+
+// ----- 入庫・出庫 -----
+function openMoveForm(id, kind) {
+  const item = findItem(id);
+  if (!item) return;
+  const unit = esc(item.unit);
+  const isIn = kind === '入庫';
+  openModal(kind + '：' + item.name,
+    '<form id="move-form" class="form-grid" autocomplete="off">'
+    + '<p class="note full">いまの在庫：<b>' + fmt(item.stock) + unit + '</b></p>'
+    + '<label class="field' + (isIn ? '' : ' half') + '"><span>数量（' + (unit || '単位') + '）<span class="req">必須</span></span><input name="qty" type="number" min="0" step="any" inputmode="decimal" required></label>'
+    + (isIn
+      ? '<label class="field"><span>購入日</span><input name="date" type="date" value="' + todayStr() + '"></label>'
+        + '<label class="field"><span>購入単価（円）</span><input name="unitPrice" type="number" min="0" step="any" inputmode="decimal"></label>'
+        + '<label class="field"><span>購入先</span><input name="supplier" list="supplier-list" maxlength="100"></label>'
+        + '<div class="field half"><span>金額（自動計算）</span><output class="calc" id="move-total">¥0</output></div>'
+      : '')
+    + '<label class="field ' + (isIn ? 'half' : 'half') + '"><span>メモ</span><input name="memo" maxlength="500" placeholder="' + (isIn ? '例：春肥の分' : '例：第2ハウスで使用') + '"></label>'
+    + '<div class="form-actions full"><button type="submit" class="btn btn-primary">' + kind + 'を記録</button><button type="button" class="btn" data-close>キャンセル</button></div>'
+    + '</form>' + datalist('supplier-list', suppliers()));
+
+  const form = $('move-form');
+  if (isIn) {
+    form.elements.unitPrice.value = num(item.price) === null ? '' : item.price;
+    form.elements.supplier.value = item.supplier || '';
+    const update = () => { $('move-total').textContent = yen((Number(form.elements.qty.value) || 0) * (Number(form.elements.unitPrice.value) || 0)); };
+    form.elements.qty.addEventListener('input', update);
+    form.elements.unitPrice.addEventListener('input', update);
+  }
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const p = { qty: form.elements.qty.value, memo: form.elements.memo.value };
+    if (isIn) Object.assign(p, { date: form.elements.date.value, unitPrice: form.elements.unitPrice.value, supplier: form.elements.supplier.value });
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      applyResult(await save('moveStock', [id, kind, p]));
+      closeModal();
+      toast(kind + 'を記録しました。');
+    } catch (err) {
+      btn.disabled = false;
+    }
+  });
+}
+
+// ----- 過去の購入 -----
+function openPastForm(id) {
+  const item = findItem(id);
+  if (!item) return;
+  const thisYear = new Date().getFullYear();
+  let years = '';
+  for (let y = thisYear; y >= thisYear - 15; y--) years += '<option value="' + y + '">' + y + '年</option>';
+
+  openModal('過去の購入：' + item.name,
+    '<form id="past-form" class="form-grid" autocomplete="off">'
+    + '<p class="note full">今の在庫は変わりません。アプリを使い始める前の価格を記録すると、前年比や3年前比が計算できるようになります。続けて何件でも入力できます。</p>'
+    + '<div class="field full"><span>購入日</span><div class="seg" id="past-mode"><button type="button" data-m="date" class="active">日付で入力</button><button type="button" data-m="year">年だけ入力</button></div></div>'
+    + '<label class="field half" id="past-date-wrap"><span>日付</span><input name="date" type="date"></label>'
+    + '<label class="field half" id="past-year-wrap" hidden><span>年</span><select name="year">' + years + '</select></label>'
+    + '<label class="field half"><span>購入単価（円）<span class="req">必須</span></span><input name="unitPrice" type="number" min="0" step="any" inputmode="decimal" required></label>'
+    + '<label class="field half"><span>数量（' + (esc(item.unit) || '単位') + '）<small>省略すると1</small></span><input name="qty" type="number" min="0" step="any" inputmode="decimal"></label>'
+    + '<label class="field half"><span>購入先</span><input name="supplier" list="supplier-list" maxlength="100"></label>'
+    + '<label class="field full"><span>メモ</span><input name="memo" maxlength="500"></label>'
+    + '<div class="form-actions full"><button type="submit" class="btn btn-primary">記録する</button><button type="button" class="btn" data-close>閉じる</button></div>'
+    + '<div class="full" id="past-done"></div>'
+    + '</form>' + datalist('supplier-list', suppliers()));
+
+  const form = $('past-form');
+  let mode = 'date';
+  form.elements.supplier.value = item.supplier || '';
+  $('past-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    mode = b.dataset.m;
+    $('past-mode').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+    $('past-date-wrap').hidden = mode !== 'date';
+    $('past-year-wrap').hidden = mode !== 'year';
+  });
+  const done = [];
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const date = mode === 'date' ? form.elements.date.value : form.elements.year.value;
+    if (!date) {
+      toast('購入日を入力してください。', true);
+      return;
+    }
+    const p = { date: date, qty: form.elements.qty.value, unitPrice: form.elements.unitPrice.value, supplier: form.elements.supplier.value, memo: form.elements.memo.value };
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      applyResult(await save('addPastPurchase', [id, p]));
+      done.unshift(date + '　' + yen(Number(p.unitPrice)) + (p.qty ? ' × ' + p.qty : ''));
+      $('past-done').innerHTML = '<p class="note">記録済み：<br>' + done.map(esc).join('<br>') + '</p>';
+      form.elements.unitPrice.value = '';
+      form.elements.qty.value = '';
+      form.elements.memo.value = '';
+      form.elements.unitPrice.focus();
+      toast('記録しました。続けて入力できます。');
+    } catch (err) {
+      // save() でお知らせ済み
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+// ----- 資材の詳細 -----
+function openDetail(id) {
+  const item = findItem(id);
+  if (!item) return;
+  const d = getDerived();
+  const c = compareItem(item, ui.priceYear);
+  const ys = d.yearStats.get(id) || {};
+  const years = Object.keys(ys).map(Number).sort((a, b) => b - a);
+  const series = publicSeriesFor(item);
+  const latest = latestPublic(series);
+  const purchases = data.history.filter((h) => h.itemId === id && PURCHASE_TYPES.indexOf(h.type) >= 0)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.timestamp).localeCompare(String(a.timestamp)));
+  const recent = data.history.filter((h) => h.itemId === id).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 10);
+  const unit = esc(item.unit);
+
+  const html = '<div class="item-tags" style="margin-bottom:8px"><span class="badge">' + esc(item.category) + '</span>' + tagsHtml(itemTags(item))
+    + (item.supplier ? '<span class="chg-sub">購入先：' + esc(item.supplier) + '</span>' : '') + '</div>'
+    + '<div class="detail-stats">'
+    + tile('在庫', fmt(item.stock) + unit, '合計 ' + yen((num(item.stock) || 0) * (num(item.price) || 0)))
+    + tile('最新の単価', yen(num(item.price)), item.lastPurchaseDate ? esc(item.lastPurchaseDate) + ' 購入' : '')
+    + tile('前年比' + (c.by ? '（' + c.by + '年）' : ''), chg(c.yoy), '3年前比 ' + chgText(c.r3))
+    + tile('全国の前年比', chg(c.pubYoy), series ? esc(publicLabel(series)) : '比べるデータなし')
+    + '</div>'
+    + '<div class="form-actions" style="margin-bottom:10px">'
+    + '<button type="button" class="btn" data-detail-act="in">入庫</button><button type="button" class="btn" data-detail-act="out">出庫</button>'
+    + '<button type="button" class="btn" data-detail-act="past">過去の購入を記録</button><button type="button" class="btn" data-detail-act="edit">編集</button></div>'
+    + '<p class="purpose' + (item.purpose ? '' : ' empty-purpose') + '"><span class="purpose-label">用途</span>' + (item.purpose ? esc(item.purpose) : '未入力（「編集」から入力できます）') + '</p>'
+    + '<h3>取扱説明書（' + manualsOf(id).length + '件）</h3>'
+    + (manualsOf(id).length ? '<div class="files">' + manualsOf(id).map(fileCardHtml).join('') + '</div>' : '<p class="note">まだ登録されていません。</p>')
+    + '<div class="form-actions" style="margin:8px 0 10px"><button type="button" class="btn" data-detail-act="upload">＋ 説明書を追加（PDF・画像）</button></div>'
+    + (years.length ? '<div class="chart-box"><canvas id="detail-chart" aria-label="' + esc(item.name) + 'の価格推移"></canvas></div>' : '<p class="empty">購入記録がありません。「入庫」か「過去の購入を記録」で価格を記録してください。</p>')
+    + (latest ? '<p class="note">全国：' + esc(publicLabel(series)) + ' ' + (series.kind === 'item' ? yen(latest.value) : latest.value) + '（' + esc(latest.period.replace('-', '年')) + '月' + (latest.prov ? '・速報' : '') + '）</p>' : '')
+    + (years.length ? '<h3>年ごとの平均単価</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>年</th><th class="num">年平均単価</th><th class="num">数量</th><th class="num">回数</th><th class="num">前年比</th><th class="num">全国 前年比</th></tr></thead><tbody>'
+      + years.map((y) => '<tr><td>' + y + '年</td><td class="num">' + yen(ys[y].avg) + '</td><td class="num">' + fmt(ys[y].qty) + unit + '</td><td class="num">' + ys[y].n + '</td>'
+        + '<td class="num">' + chg(ys[y - 1] ? rate(ys[y].avg, ys[y - 1].avg) : null) + '</td><td class="num">' + chg(publicChange(series, y, 1)) + '</td></tr>').join('')
+      + '</tbody></table></div>' : '')
+    + (purchases.length ? '<h3>購入の記録</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>購入日</th><th class="num">数量</th><th class="num">単価</th><th class="num">金額</th><th>購入先</th><th></th></tr></thead><tbody>'
+      + purchases.map((h) => '<tr' + (isCancelled(h) ? ' class="is-cancelled"' : '') + '><td>' + esc(h.date) + (h.type === '過去の購入' ? '<div class="chg-sub">過去の購入</div>' : '') + '</td>'
+        + '<td class="num">' + fmt(Math.abs(num(h.qty) || 0)) + unit + '</td><td class="num">' + yen(num(h.unitPrice)) + '</td><td class="num">' + yen(num(h.amount)) + '</td><td>' + esc(h.supplier) + '</td>'
+        + '<td class="keep">' + (isCancelled(h) ? '取消済み' : '<button type="button" class="btn btn-small" data-cancel="' + esc(h.id) + '">取消</button>') + '</td></tr>').join('')
+      + '</tbody></table></div>' : '')
+    + '<h3>最近の記録</h3>' + (recent.length ? recent.map(historyRowHtml).join('') : '<p class="empty">記録がありません。</p>')
+    + (item.memo ? '<h3>メモ</h3><p style="white-space:pre-wrap">' + esc(item.memo) + '</p>' : '');
+
+  openModal(item.name, html, { detail: id, noFocus: true });
+
+  if (years.length) {
+    const built = priceDatasets([{ id: id, slot: 0 }], 'yen', Math.max(ui.priceYear, years[0]));
+    // 品目別の全国平均価格と比べる場合は、同じ円の目盛りで点線を重ねる
+    if (series && series.kind === 'item') {
+      const pub = [];
+      for (let y = built.minYear; y <= built.maxYear; y++) {
+        const v = publicYearAvg(series, y);
+        if (v) pub.push({ x: y, y: v });
+      }
+      if (pub.length) built.datasets.push({ type: 'line', label: '全国平均：' + publicLabel(series), data: pub, borderColor: seriesColor(1), backgroundColor: seriesColor(1), borderDash: [6, 4], borderWidth: 2, pointRadius: 3, pointStyle: 'rectRot' });
+    }
+    if (charts.detail) charts.detail.destroy();
+    charts.detail = typeof Chart === 'undefined' ? null : new Chart($('detail-chart'), Object.assign({ type: 'line' }, priceChartConfig(built, 'yen')));
+  }
+}
+
+// ===== CSV出力 =====
+function downloadCsv(rows, fileName) {
+  const cell = (v) => '"' + String(v === null || v === undefined ? '' : v).replace(/"/g, '""') + '"';
+  const csv = '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function dateStamp() {
+  return todayStr().replace(/-/g, '');
+}
+
+// ===== イベントの登録 =====
+function bindEvents() {
+  // タブの切り替え（通信なし）
+  document.querySelector('.tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-tab]');
+    if (!b) return;
+    ui.tab = b.dataset.tab;
+    try { localStorage.setItem(TAB_KEY, ui.tab); } catch (err) { /* 保存できなくてもよい */ }
+    document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
+    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === 'tab-' + ui.tab));
+    renderAll();
+    window.scrollTo(0, 0);
+  });
+
+  $('refresh-btn').addEventListener('click', () => loadAll(false));
+  $('add-item-btn').addEventListener('click', () => openItemForm(null));
+
+  ['stock-search', 'stock-category', 'stock-supplier', 'stock-status'].forEach((id) => $(id).addEventListener('input', renderStock));
+  ['price-search', 'price-category', 'price-sort'].forEach((id) => $(id).addEventListener('input', () => renderPriceTable(data.items.map((i) => compareItem(i, ui.priceYear)))));
+  ['history-item', 'history-period', 'history-type'].forEach((id) => $(id).addEventListener('input', () => { ui.historyLimit = 200; renderHistory(); }));
+  ['manual-search', 'manual-category', 'manual-filter'].forEach((id) => $(id).addEventListener('input', renderManual));
+
+  // 説明書タブのボタン
+  $('manual-list').addEventListener('click', (e) => {
+    const card = e.target.closest('.manual-item[data-id]');
+    if (!card) return;
+    if (e.target.closest('[data-manual-add]')) openUploadForm(card.dataset.id, false);
+    if (e.target.closest('[data-purpose-edit]')) openItemForm(card.dataset.id);
+  });
+  $('price-year').addEventListener('change', (e) => { ui.priceYear = Number(e.target.value); renderPrice(); });
+  $('summary-year').addEventListener('change', (e) => { ui.summaryYear = Number(e.target.value); renderSummary(); });
+
+  // 在庫一覧のボタン
+  $('stock-list').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const id = b.closest('.item-card').dataset.id;
+    const act = b.dataset.act;
+    if (act === 'inc') quickAdjust(id, 1);
+    if (act === 'dec') quickAdjust(id, -1);
+    if (act === 'in') openMoveForm(id, '入庫');
+    if (act === 'out') openMoveForm(id, '出庫');
+    if (act === 'edit') openItemForm(id);
+    if (act === 'detail') openDetail(id);
+  });
+
+  // 資材名を押したら詳細を開く（注意一覧・価格の表）
+  document.addEventListener('click', (e) => {
+    const d = e.target.closest('[data-detail]');
+    if (d && !d.closest('#modal')) openDetail(d.dataset.detail);
+    const c = e.target.closest('[data-cancel]');
+    if (c) cancelRecord(c.dataset.cancel);
+    const ma = e.target.closest('[data-manual-act]');
+    if (ma) manualAction(ma.closest('[data-manual]').dataset.manual, ma.dataset.manualAct);
+    if (e.target.closest('[data-close]')) closeModal();
+    if (e.target.id === 'history-more') {
+      ui.historyLimit += 200;
+      renderHistory();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('modal').hidden) closeModal();
+  });
+
+  // 詳細の小窓の中のボタン
+  $('modal-content').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-detail-act]');
+    if (!b) return;
+    const id = $('modal').dataset.detail;
+    const act = b.dataset.detailAct;
+    if (act === 'in') openMoveForm(id, '入庫');
+    if (act === 'out') openMoveForm(id, '出庫');
+    if (act === 'past') openPastForm(id);
+    if (act === 'edit') openItemForm(id);
+    if (act === 'upload') openUploadForm(id, true);
+  });
+
+  // 価格グラフの資材選択
+  $('price-table').addEventListener('change', (e) => {
+    const id = e.target.dataset.chart;
+    if (!id) return;
+    ui.chartTouched = true;
+    if (!toggleSelection('chartSel', id, 'id')) e.target.checked = false;
+    renderPriceTable(data.items.map((i) => compareItem(i, ui.priceYear)));
+    renderPriceChart();
+  });
+
+  $('chart-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    ui.chartMode = b.dataset.mode;
+    renderPriceChart();
+  });
+
+  $('index-chips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-index]');
+    if (!b) return;
+    toggleSelection('indexSel', b.dataset.index, 'key');
+    renderIndexChart();
+  });
+
+  // CSV出力
+  $('export-items-csv').addEventListener('click', () => {
+    const year = new Date().getFullYear();
+    downloadCsv([['資材名', 'カテゴリ', '在庫数', '単位', '単価', '合計金額', '発注の目安', '使用期限', '購入先', 'メモ', '前年比(%)', '更新日時', '更新者']]
+      .concat(sortedItems(data.items).map((i) => [i.name, i.category, i.stock, i.unit, i.price, Math.round((num(i.stock) || 0) * (num(i.price) || 0)),
+        i.reorderLevel, i.expiry, i.supplier, i.memo, pctPlain(compareItem(i, year).yoy), i.updatedAt, userName(i.updatedBy)])), 'shizai-zaiko-' + dateStamp() + '.csv');
+  });
+  $('export-price-csv').addEventListener('click', () => {
+    const r = (v) => (v === null || v === undefined ? '' : Math.round(v));
+    downloadCsv([['資材名', 'カテゴリ', '基準年', '3年前の単価', '2年前の単価', '前年の単価', '基準年の単価', '前年比(%)', '3年前比(%)', '年平均の変動(%)', '全国 前年比(%)', '全国 3年前比(%)', '全国との差(pt)', '比べた全国データ']]
+      .concat(sortedItems(data.items).map((i) => {
+        const c = compareItem(i, ui.priceYear);
+        return [i.name, i.category, c.by || '', r(c.y3), r(c.y2), r(c.prev), r(c.cur), pctPlain(c.yoy), pctPlain(c.r3), pctPlain(c.cagr), pctPlain(c.pubYoy), pctPlain(c.pub3), pctPlain(c.gap), publicLabel(c.series)];
+      })), 'shizai-kakaku-' + ui.priceYear + '-' + dateStamp() + '.csv');
+  });
+
+  // ----- 設定 -----
+  $('name-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      applyResult({ settings: await save('setMyName', [$('my-name').value]) });
+      toast('表示名を保存しました。');
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+
+  $('category-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('new-category').value.trim();
+    if (!name) return;
+    try {
+      applyResult(await save('addCategory', [name]));
+      $('new-category').value = '';
+      toast('「' + name + '」を追加しました。');
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+
+  $('category-list').addEventListener('click', async (e) => {
+    const row = e.target.closest('.cat-row');
+    if (!row) return;
+    const name = row.dataset.cat;
+    try {
+      const move = e.target.closest('[data-cat-move]');
+      if (move) applyResult(await save('moveCategory', [name, Number(move.dataset.catMove)]));
+      if (e.target.closest('[data-cat-rename]')) openRenameForm(name);
+      if (e.target.closest('[data-cat-delete]')) {
+        const used = data.items.filter((x) => x.category === name).length;
+        if (used) {
+          toast('このカテゴリの資材が' + used + '件あります。先に別のカテゴリへ変更してください。', true);
+          return;
+        }
+        if (await askConfirm('カテゴリ「' + name + '」を削除しますか？', '削除する')) {
+          applyResult(await save('deleteCategory', [name]));
+          toast('削除しました。');
+        }
+      }
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+
+  $('category-list').addEventListener('change', async (e) => {
+    if (!e.target.matches('[data-cat-public]')) return;
+    try {
+      applyResult(await save('setCategoryPublic', [e.target.closest('.cat-row').dataset.cat, e.target.value]));
+      toast('保存しました。');
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+
+  $('threshold-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      applyResult({ settings: await save('saveThresholds', [{ alertDays: $('set-alert-days').value, priceAlertPct: $('set-price-pct').value, gapAlertPts: $('set-gap-pts').value }]) });
+      toast('保存しました。');
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+
+  $('notify-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      applyResult({ settings: await save('saveNotifySettings', [{
+        notifyEnabled: $('set-notify').checked, notifyHour: $('set-notify-hour').value,
+        publicAutoFetch: $('set-public-auto').checked, publicNotify: $('set-public-notify').checked, publicSourceUrl: $('set-public-url').value,
+      }]) });
+      toast('保存しました。');
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+
+  $('fetch-public-btn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = '取得中…（1分ほどかかります）';
+    try {
+      const res = await save('fetchPublicNow', []);
+      applyResult({ settings: res.settings, publicData: res.publicData });
+      toast(res.message, !res.ok);
+    } catch (err) {
+      // save() でお知らせ済み
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '今すぐ取得';
+    }
+  });
+
+  $('copy-url-btn').addEventListener('click', async () => {
+    const input = $('app-url');
+    try {
+      await navigator.clipboard.writeText(input.value);
+    } catch (err) {
+      input.select();
+      document.execCommand('copy');
+    }
+    toast('URLをコピーしました。');
+  });
+
+  // 画面に戻ってきたら最新データを読み込む
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastLoaded > 30000) loadAll(true);
+  });
+}
+
+function openRenameForm(oldName) {
+  openModal('カテゴリ名の変更',
+    '<form id="rename-form" class="form-grid"><label class="field full"><span>新しい名前</span><input name="name" maxlength="30" required></label>'
+    + '<p class="note full">このカテゴリの資材にも反映されます。</p>'
+    + '<div class="form-actions full"><button type="submit" class="btn btn-primary">変更する</button><button type="button" class="btn" data-close>キャンセル</button></div></form>');
+  const form = $('rename-form');
+  form.elements.name.value = oldName;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      applyResult(await save('renameCategory', [oldName, form.elements.name.value]));
+      closeModal();
+      toast('変更しました。');
+    } catch (err) { /* save() でお知らせ済み */ }
+  });
+}
+
+// ===== 起動 =====
+function start() {
+  if (typeof Chart !== 'undefined') {
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  }
+  try {
+    const saved = localStorage.getItem(TAB_KEY);
+    if (saved && $('tab-' + saved)) document.querySelector('.tabs [data-tab="' + saved + '"]').click();
+  } catch (e) { /* 保存できなくてもよい */ }
+
+  // 前回のデータがあれば先に表示し、裏で最新データを読み込む
+  const cached = readCache();
+  if (cached && cached.items) {
+    data = cached;
+    $('loading').hidden = true;
+    renderAll();
+  }
+  loadAll(!!cached);
+}
+
+bindEvents();
+start();
+</script>
