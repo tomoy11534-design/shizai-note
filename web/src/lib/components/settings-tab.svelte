@@ -2,6 +2,7 @@
 	import { app } from '#lib/app-state.svelte.js';
 	import { periodText, shortDateTime } from '#lib/format.js';
 	import PublicRefSelect from './public-ref-select.svelte';
+	import SheetLinkPanel from './sheet-link-panel.svelte';
 
 	let me = $derived(app.members.find((m) => m.user_id === app.myId));
 	let myName = $state('');
@@ -184,6 +185,8 @@
 	<button type="button" class="btn" disabled={fetching} onclick={fetchPublic}>{fetching ? '取得中…（30秒ほどかかります）' : '今すぐ取得'}</button>
 	<p class="note">毎月1日と15日に自動で取得します。出典：農林水産省「農業物価統計調査」。最新の値は速報値（概数値）で、あとで確定値に置き換わります。</p>
 </div>
+
+<SheetLinkPanel />
 
 <div class="panel">
 	<h2>アカウント</h2>
