@@ -26,7 +26,7 @@
 2. 左のメニューの **SQL Editor** を開き、`web/supabase/schema.sql` の中身をすべて貼り付けて **Run** を押します。
    - 「Success」と出れば完了です。テーブル、家族ごとのアクセス制限、説明書のファイル置き場がまとめて作られます。
    - **2回実行するとエラーになります**（すでに作られているため）。やり直したいときは、新しいプロジェクトを作り直すのが簡単です。
-   - 辞書・棚卸し・カテゴリをまとめる機能を追加する前に `schema.sql` を実行した場合は、`web/supabase/add-dictionary.sql`・`add-stocktake.sql`・`add-merge-category.sql`・`add-spec-and-tax.sql` も1回ずつ実行します（何度実行してもエラーにはなりません）。
+   - 辞書・棚卸し・カテゴリをまとめる機能を追加する前に `schema.sql` を実行した場合は、`web/supabase/add-dictionary.sql`・`add-stocktake.sql`・`add-merge-category.sql`・`add-spec-and-tax.sql`・`add-product-code.sql` も1回ずつ実行します（何度実行してもエラーにはなりません）。
 3. **Authentication → URL Configuration** を開きます。
    - Site URL：あとで決まるVercelのURL（例：`https://shizai-note.vercel.app`）。今は `http://localhost:5173` のままでかまいません。
    - Redirect URLs：`http://localhost:5173/**` と、VercelのURL＋`/**` を追加します。

@@ -28,7 +28,7 @@
 				if (category && item.category_id !== category) return false;
 				if (onlyLeft && draft.counts[item.id]) return false;
 				const q = search.trim().toLowerCase();
-				return !q || `${item.name} ${item.spec}`.toLowerCase().includes(q);
+				return !q || `${item.name} ${item.spec} ${item.product_code}`.toLowerCase().includes(q);
 			})
 		)
 	);

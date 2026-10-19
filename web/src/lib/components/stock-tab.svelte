@@ -30,7 +30,7 @@
 				if (category && item.category_id !== category) return false;
 				if (supplier && item.supplier !== supplier) return false;
 				const q = search.trim().toLowerCase();
-				if (q && !`${item.name} ${item.spec} ${item.memo} ${item.supplier} ${item.purpose} ${dictionaryText(item)}`.toLowerCase().includes(q)) return false;
+				if (q && !`${item.name} ${item.spec} ${item.product_code} ${item.memo} ${item.supplier} ${item.purpose} ${dictionaryText(item)}`.toLowerCase().includes(q)) return false;
 				if (status) {
 					const keys = app.tagsOf(item).map((t) => t.key);
 					if (status === 'attention' ? !keys.length : !keys.includes(status as never)) return false;
@@ -51,9 +51,9 @@
 	function exportCsv() {
 		downloadCsv(
 			[
-				['資材名', '規格', 'カテゴリ', '在庫数', '単位', '単価', '合計金額', '発注の目安', '使用期限', '購入先', '用途', 'メモ', '前年比(%)', '更新日時', '更新者'],
+				['資材名', '規格', '品名コード', 'カテゴリ', '在庫数', '単位', '単価', '合計金額', '発注の目安', '使用期限', '購入先', '用途', 'メモ', '前年比(%)', '更新日時', '更新者'],
 				...app.sortItems(app.items).map((i) => [
-					i.name, i.spec, app.categoryName(i.category_id), i.stock, i.unit, i.price, Math.round(i.stock * i.price), i.reorder_level, i.expiry,
+					i.name, i.spec, i.product_code, app.categoryName(i.category_id), i.stock, i.unit, i.price, Math.round(i.stock * i.price), i.reorder_level, i.expiry,
 					i.supplier, i.purpose, i.memo, pctPlain(app.compare(i, thisYear).yoy), i.updated_at, app.memberName(i.updated_by)
 				])
 			],

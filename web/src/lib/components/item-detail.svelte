@@ -36,6 +36,7 @@
 {#if item && c}
 	<div class="item-tags" style="margin-bottom:8px">
 		{#if item.spec}<span class="chg-sub">規格：{item.spec}</span>{/if}
+		{#if item.product_code}<span class="chg-sub">品名コード：{item.product_code}</span>{/if}
 		<span class="badge">{app.categoryName(item.category_id)}</span>
 		{#each app.tagsOf(item) as t, i (i)}<span class="badge badge-{t.level}">{t.text}</span>{/each}
 		{#if item.supplier}<span class="chg-sub">購入先：{item.supplier}</span>{/if}

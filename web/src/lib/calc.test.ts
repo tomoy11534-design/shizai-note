@@ -35,6 +35,7 @@ const item = (p: Partial<Item> = {}): Item => ({
 	household_id: 'h',
 	name: '肥料A',
 	spec: '',
+	product_code: '',
 	category_id: 'c',
 	unit: '袋',
 	stock: 10,

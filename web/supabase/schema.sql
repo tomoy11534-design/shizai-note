@@ -50,6 +50,8 @@ create table public.items (
 	household_id uuid not null references public.households (id) on delete cascade,
 	name text not null check (char_length(name) between 1 and 100),
 	spec text not null default '' check (char_length(spec) <= 100),
+	-- JAの明細にある品名コード（同じコードを複数の品名で使うこともある）
+	product_code text not null default '' check (char_length(product_code) <= 30),
 	-- 使われているカテゴリは削除できない（restrict）
 	category_id uuid not null references public.categories (id) on delete restrict,
 	unit text not null default '' check (char_length(unit) <= 20),
@@ -310,9 +312,9 @@ begin
 	if cat_name is null then raise exception 'カテゴリを選んでください。'; end if;
 
 	if p ->> 'id' is null or p ->> 'id' = '' then
-		insert into public.items (household_id, name, spec, category_id, unit, stock, price, reorder_level, expiry,
+		insert into public.items (household_id, name, spec, product_code, category_id, unit, stock, price, reorder_level, expiry,
 			supplier, purpose, memo, features, how_to_use, cautions, crops, public_ref, updated_by)
-		values (p_household, trim(p ->> 'name'), trim(coalesce(p ->> 'spec', '')), (p ->> 'category_id')::uuid, coalesce(p ->> 'unit', ''),
+		values (p_household, trim(p ->> 'name'), trim(coalesce(p ->> 'spec', '')), trim(coalesce(p ->> 'product_code', '')), (p ->> 'category_id')::uuid, coalesce(p ->> 'unit', ''),
 			coalesce((p ->> 'stock')::numeric, 0), coalesce((p ->> 'price')::numeric, 0),
 			nullif(p ->> 'reorder_level', '')::numeric, nullif(p ->> 'expiry', '')::date,
 			coalesce(p ->> 'supplier', ''), coalesce(p ->> 'purpose', ''), coalesce(p ->> 'memo', ''),
@@ -334,6 +336,7 @@ begin
 	update public.items set
 		name = trim(p ->> 'name'),
 		spec = trim(coalesce(p ->> 'spec', cur.spec)),
+		product_code = trim(coalesce(p ->> 'product_code', cur.product_code)),
 		category_id = (p ->> 'category_id')::uuid,
 		unit = coalesce(p ->> 'unit', ''),
 		stock = coalesce((p ->> 'stock')::numeric, 0),

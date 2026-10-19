@@ -38,6 +38,7 @@ export interface Item {
 	household_id: string;
 	name: string;
 	spec: string;
+	product_code: string;
 	category_id: string;
 	unit: string;
 	stock: number;
