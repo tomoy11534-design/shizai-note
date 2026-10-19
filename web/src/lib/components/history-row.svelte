@@ -10,6 +10,8 @@
 	let unit = $derived((e.item_id && app.findItem(e.item_id)?.unit) || '');
 	let isPurchase = $derived(PURCHASE_TYPES.includes(e.type));
 	let dateText = $derived(e.date_precision === 'year' ? `${e.event_date.slice(0, 4)}年` : e.event_date);
+	// 記録には資材名しか残らないので、規格は今の資材から探す
+	let spec = $derived(e.item_id ? (app.findItem(e.item_id)?.spec ?? '') : '');
 	let canCancel = $derived(CANCELABLE_TYPES.includes(e.type) && !e.cancelled);
 
 	async function cancel() {
@@ -27,14 +29,14 @@
 <div class="history-row" class:is-cancelled={e.cancelled}>
 	<div class="history-main">
 		<b>{e.type}</b>
-		{e.item_name}
+		{e.item_name}{#if spec}<span class="spec">{spec}</span>{/if}
 		{#if e.type === '登録'}在庫 {fmt(e.qty)}{unit}
 		{:else if e.qty !== null && e.type !== '編集'}{e.type === '過去の購入' || e.qty <= 0 ? '' : '+'}{fmt(e.qty)}{unit}{/if}
 		{#if e.stock_after !== null && e.type !== '過去の購入'}<span class="chg-sub"> → 在庫 {fmt(e.stock_after)}{unit}</span>{/if}
 		{#if e.cancelled}<span class="badge">取消済み</span>{/if}
 	</div>
 	<div class="history-amount">
-		{#if isPurchase}{yen(e.amount)}<div class="chg-sub">@{yen(e.unit_price)}</div>{/if}
+		{#if isPurchase}{yen(e.amount)}<div class="chg-sub">@{yen(e.unit_price)}{#if e.discount}・値引 {yen(e.discount)}{/if}{#if e.tax != null}・うち税 {yen(e.tax)}{/if}</div>{/if}
 	</div>
 	<div class="history-meta">
 		{isPurchase ? `購入日 ${dateText}` : shortDateTime(e.created_at)}

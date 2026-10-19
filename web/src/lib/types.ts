@@ -37,6 +37,7 @@ export interface Item {
 	id: string;
 	household_id: string;
 	name: string;
+	spec: string;
 	category_id: string;
 	unit: string;
 	stock: number;
@@ -71,6 +72,10 @@ export interface StockEvent {
 	stock_after: number | null;
 	unit_price: number | null;
 	amount: number | null;
+	// 値引金額・消費税・税抜金額（明細から分かるときだけ）
+	discount: number | null;
+	tax: number | null;
+	amount_ex_tax: number | null;
 	supplier: string;
 	memo: string;
 	cancelled: boolean;

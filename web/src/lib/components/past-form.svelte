@@ -17,6 +17,8 @@
 	let qty = $state<number | null>(null);
 	let supplier = $state(item?.supplier ?? '');
 	let memo = $state('');
+	let discount = $state<number | null>(null);
+	let tax = $state<number | null>(null);
 	let saving = $state(false);
 	let done = $state<string[]>([]);
 	let priceInput: HTMLInputElement | undefined = $state();
@@ -28,11 +30,13 @@
 		if (unitPrice === null || unitPrice < 0) return app.toast('購入単価を入力してください。', true);
 		saving = true;
 		try {
-			await app.addPastPurchase(id, { date: d, precision: mode, qty, unitPrice, supplier, memo });
+			await app.addPastPurchase(id, { date: d, precision: mode, qty, unitPrice, supplier, memo, discount, tax });
 			done = [`${mode === 'day' ? d : `${d}年`}　${yen(unitPrice)}${qty ? ` × ${qty}` : ''}`, ...done];
 			unitPrice = null;
 			qty = null;
 			memo = '';
+			discount = null;
+			tax = null;
 			priceInput?.focus();
 			app.toast('記録しました。続けて入力できます。');
 		} catch {
@@ -61,6 +65,8 @@
 		<label class="field half"><span>購入単価（円）<span class="req">必須</span></span><input bind:this={priceInput} type="number" min="0" step="any" inputmode="decimal" bind:value={unitPrice} required /></label>
 		<label class="field half"><span>数量（{item.unit || '単位'}）<small>省略すると1</small></span><input type="number" min="0" step="any" inputmode="decimal" bind:value={qty} /></label>
 		<label class="field half"><span>購入先</span><input bind:value={supplier} list="supplier-list" maxlength="100" /></label>
+		<label class="field half"><span>値引金額（円）<small>あれば</small></span><input type="number" min="0" step="any" inputmode="decimal" bind:value={discount} /></label>
+		<label class="field half"><span>うち消費税（円）<small>あれば</small></span><input type="number" min="0" step="any" inputmode="decimal" bind:value={tax} /></label>
 		<label class="field full"><span>メモ</span><input bind:value={memo} maxlength="500" /></label>
 		<div class="form-actions full">
 			<button type="submit" class="btn btn-primary" disabled={saving}>記録する</button>

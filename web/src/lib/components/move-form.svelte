@@ -13,6 +13,8 @@
 	let unitPrice = $state<number | null>(item?.price ?? null);
 	let supplier = $state(item?.supplier ?? '');
 	let memo = $state('');
+	let discount = $state<number | null>(null);
+	let tax = $state<number | null>(null);
 	let saving = $state(false);
 
 	async function submit(e: SubmitEvent) {
@@ -20,7 +22,7 @@
 		if (!qty || qty <= 0) return app.toast('数量を正しく入力してください。', true);
 		saving = true;
 		try {
-			await app.moveStock(id, kind, kind === '入庫' ? { qty, date, unitPrice, supplier, memo } : { qty, memo });
+			await app.moveStock(id, kind, kind === '入庫' ? { qty, date, unitPrice, supplier, memo, discount, tax } : { qty, memo });
 			app.modal = null;
 			app.toast(`${kind}を記録しました。`);
 		} catch {
@@ -39,7 +41,9 @@
 			<label class="field"><span>購入日</span><input type="date" bind:value={date} /></label>
 			<label class="field"><span>購入単価（円）</span><input type="number" min="0" step="any" inputmode="decimal" bind:value={unitPrice} /></label>
 			<label class="field"><span>購入先</span><input bind:value={supplier} list="supplier-list" maxlength="100" /></label>
-			<div class="field half"><span>金額（自動計算）</span><output class="calc">{yen((qty ?? 0) * (unitPrice ?? 0))}</output></div>
+			<label class="field"><span>値引金額（円）<small>あれば</small></span><input type="number" min="0" step="any" inputmode="decimal" bind:value={discount} /></label>
+			<label class="field"><span>うち消費税（円）<small>あれば</small></span><input type="number" min="0" step="any" inputmode="decimal" bind:value={tax} /></label>
+			<div class="field half"><span>支払額（自動計算）<small>単価×数量−値引</small></span><output class="calc">{yen(Math.round((qty ?? 0) * (unitPrice ?? 0)) - (discount ?? 0))}</output></div>
 		{/if}
 		<label class="field half"><span>メモ</span><input bind:value={memo} maxlength="500" placeholder={kind === '入庫' ? '例：春肥の分' : '例：第2ハウスで使用'} /></label>
 		<div class="form-actions full">

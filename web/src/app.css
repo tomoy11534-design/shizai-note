@@ -282,6 +282,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 .item-card.is-low { background: var(--warn-bg); }
 .item-name { font-weight: bold; font-size: 1.02rem; background: none; border: none; padding: 0; color: var(--text); font-family: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
 .item-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.spec { font-size: 0.8rem; color: var(--text-2); margin-left: 6px; font-weight: normal; }
 .item-money { text-align: right; font-variant-numeric: tabular-nums; }
 .item-total { font-weight: bold; font-size: 1.05rem; }
 .item-price { font-size: 0.8rem; color: var(--text-2); }

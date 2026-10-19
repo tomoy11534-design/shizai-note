@@ -35,6 +35,7 @@
 
 {#if item && c}
 	<div class="item-tags" style="margin-bottom:8px">
+		{#if item.spec}<span class="chg-sub">規格：{item.spec}</span>{/if}
 		<span class="badge">{app.categoryName(item.category_id)}</span>
 		{#each app.tagsOf(item) as t, i (i)}<span class="badge badge-{t.level}">{t.text}</span>{/each}
 		{#if item.supplier}<span class="chg-sub">購入先：{item.supplier}</span>{/if}
@@ -105,14 +106,14 @@
 		<h3>購入の記録</h3>
 		<div class="table-scroll">
 			<table class="data-table">
-				<thead><tr><th>購入日</th><th class="num">数量</th><th class="num">単価</th><th class="num">金額</th><th>購入先</th></tr></thead>
+				<thead><tr><th>購入日</th><th class="num">数量</th><th class="num">単価</th><th class="num">支払額</th><th>購入先</th></tr></thead>
 				<tbody>
 					{#each purchases as e (e.id)}
 						<tr class:is-cancelled={e.cancelled}>
 							<td>{e.date_precision === 'year' ? `${e.event_date.slice(0, 4)}年` : e.event_date}{#if e.type === '過去の購入'}<div class="chg-sub">過去の購入</div>{/if}</td>
 							<td class="num">{fmt(Math.abs(e.qty ?? 0))}{item.unit}</td>
 							<td class="num">{yen(e.unit_price)}</td>
-							<td class="num">{yen(e.amount)}</td>
+							<td class="num">{yen(e.amount)}{#if e.discount}<div class="chg-sub">値引 {yen(e.discount)}</div>{/if}{#if e.tax != null}<div class="chg-sub">うち税 {yen(e.tax)}</div>{/if}</td>
 							<td>{e.supplier}</td>
 						</tr>
 					{/each}

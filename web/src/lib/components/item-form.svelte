@@ -15,6 +15,7 @@
 	function toForm(item: Item | undefined) {
 		return {
 			name: item?.name ?? '',
+			spec: item?.spec ?? '',
 			category_id: item?.category_id ?? app.categories[0]?.id ?? '',
 			unit: item?.unit ?? '',
 			stock: item?.stock ?? 0,
@@ -88,7 +89,7 @@
 
 	// 変更内容を人が読める形にまとめる（履歴のメモに残す）
 	function describe(before: ReturnType<typeof toForm>, after: ReturnType<typeof toForm>) {
-		const labels: Record<string, string> = { name: '資材名', category_id: 'カテゴリ', unit: '単位', stock: '在庫', price: '単価', reorder_level: '発注の目安', expiry: '使用期限', supplier: '購入先', public_ref: '比較データ', purpose: '用途', memo: 'メモ', ...Object.fromEntries(DICT_FIELDS.map((f) => [f.key, f.label])) };
+		const labels: Record<string, string> = { name: '資材名', spec: '規格', category_id: 'カテゴリ', unit: '単位', stock: '在庫', price: '単価', reorder_level: '発注の目安', expiry: '使用期限', supplier: '購入先', public_ref: '比較データ', purpose: '用途', memo: 'メモ', ...Object.fromEntries(DICT_FIELDS.map((f) => [f.key, f.label])) };
 		// 長い文章の欄は「〜を変更」とだけ残す
 		const longText = ['memo', 'purpose', 'public_ref', ...DICT_FIELDS.map((f) => f.key)];
 		const show = (k: string, v: unknown) => (k === 'category_id' ? app.categoryName(String(v)) : v === '' ? '（なし）' : String(v));
@@ -132,7 +133,8 @@
 
 <form class="form-grid" autocomplete="off" onsubmit={submit}>
 	{#if conflict}<div class="conflict full">{conflict}</div>{/if}
-	<label class="field full"><span>資材名<span class="req">必須</span></span><input bind:value={form.name} required maxlength="100" placeholder="例：化成肥料 8-8-8 20kg" /></label>
+	<label class="field full"><span>資材名<span class="req">必須</span></span><input bind:value={form.name} required maxlength="100" placeholder="例：化成肥料 8-8-8" /></label>
+	<label class="field full"><span>規格 <small>容量・サイズ・型番など</small></span><input bind:value={form.spec} maxlength="100" placeholder="例：20KG、500ML、150*300MM" /></label>
 	{#if addingCategory}
 		<div class="field full">
 			<label for="new-category"><span>新しいカテゴリ</span></label>

@@ -193,7 +193,7 @@
 							</label>
 						</td>
 						<td class="sticky-col">
-							<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>
+							<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>{#if item.spec}<span class="spec">{item.spec}</span>{/if}
 							<div class="chg-sub">
 								{app.categoryName(item.category_id)}{c.hasData && c.by !== year ? `・${c.by}年が基準` : ''}{c.series ? `・全国：${c.series.name}` : ''}
 							</div>

@@ -75,6 +75,14 @@ function friendly(error: PostgrestError | Error | { message: string; code?: stri
 	return error.message;
 }
 
+// 値引金額・消費税は、入力があるときだけ送る
+function taxArgs(p: { discount?: number | null; tax?: number | null }) {
+	return {
+		...(p.discount ? { p_discount: p.discount } : {}),
+		...(p.tax !== null && p.tax !== undefined ? { p_tax: p.tax } : {})
+	};
+}
+
 function upsertById<T extends { id: string }>(list: T[], rows: T[]): T[] {
 	const map = new Map(list.map((x) => [x.id, x]));
 	for (const r of rows) map.set(r.id, r);
@@ -522,7 +530,7 @@ class AppState {
 		}
 	}
 
-	moveStock(id: string, kind: '入庫' | '出庫', p: { qty: number; date?: string; unitPrice?: number | null; supplier?: string; memo?: string }) {
+	moveStock(id: string, kind: '入庫' | '出庫', p: { qty: number; date?: string; unitPrice?: number | null; supplier?: string; memo?: string; discount?: number | null; tax?: number | null }) {
 		return this.run(async () =>
 			this.apply(
 				await this.rpc('move_stock', {
@@ -532,13 +540,14 @@ class AppState {
 					p_date: p.date || null,
 					p_unit_price: p.unitPrice ?? null,
 					p_supplier: p.supplier ?? null,
-					p_memo: p.memo ?? ''
+					p_memo: p.memo ?? '',
+					...taxArgs(p)
 				})
 			)
 		);
 	}
 
-	addPastPurchase(id: string, p: { date: string; precision: 'day' | 'year'; qty: number | null; unitPrice: number; supplier: string; memo: string }) {
+	addPastPurchase(id: string, p: { date: string; precision: 'day' | 'year'; qty: number | null; unitPrice: number; supplier: string; memo: string; discount?: number | null; tax?: number | null }) {
 		return this.run(async () =>
 			this.apply(
 				await this.rpc('add_past_purchase', {
@@ -548,7 +557,8 @@ class AppState {
 					p_qty: p.qty,
 					p_unit_price: p.unitPrice,
 					p_supplier: p.supplier,
-					p_memo: p.memo
+					p_memo: p.memo,
+					...taxArgs(p)
 				})
 			)
 		);

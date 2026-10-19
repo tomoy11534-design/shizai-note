@@ -21,7 +21,7 @@
 				if (filter === 'nopurpose' && item.purpose) return false;
 				if (filter === 'nodict' && hasDictionary(item)) return false;
 				const q = search.trim().toLowerCase();
-				if (q && !`${item.name} ${item.purpose} ${dictionaryText(item)} ${files.map((f) => `${f.title} ${f.file_name}`).join(' ')}`.toLowerCase().includes(q)) return false;
+				if (q && !`${item.name} ${item.spec} ${item.purpose} ${dictionaryText(item)} ${files.map((f) => `${f.title} ${f.file_name}`).join(' ')}`.toLowerCase().includes(q)) return false;
 				return true;
 			})
 		)
@@ -65,7 +65,7 @@
 		<div class="manual-item">
 			<div class="manual-head">
 				<div>
-					<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>
+					<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>{#if item.spec}<span class="spec">{item.spec}</span>{/if}
 					<span class="badge">{app.categoryName(item.category_id)}</span>
 				</div>
 				<div class="item-buttons">

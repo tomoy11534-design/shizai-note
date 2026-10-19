@@ -28,7 +28,7 @@
 				if (category && item.category_id !== category) return false;
 				if (onlyLeft && draft.counts[item.id]) return false;
 				const q = search.trim().toLowerCase();
-				return !q || item.name.toLowerCase().includes(q);
+				return !q || `${item.name} ${item.spec}`.toLowerCase().includes(q);
 			})
 		)
 	);
@@ -51,7 +51,7 @@
 
 	async function commit() {
 		if (!rows.length) return app.toast('数えた資材がありません。', true);
-		const lines = diffRows.slice(0, 8).map((r) => `・${r.item.name}：${fmt(r.expected)} → ${fmt(r.counted)}${r.item.unit}`);
+		const lines = diffRows.slice(0, 8).map((r) => `・${r.item.name}${r.item.spec ? `（${r.item.spec}）` : ''}：${fmt(r.expected)} → ${fmt(r.counted)}${r.item.unit}`);
 		const more = diffRows.length > 8 ? `\nほか ${diffRows.length - 8} 品目` : '';
 		const message = diffRows.length
 			? `${rows.length} 品目のうち、差がある ${diffRows.length} 品目の在庫を直します。\n${lines.join('\n')}${more}`
@@ -108,7 +108,7 @@
 		{@const diff = entry ? entry.counted - entry.expected : null}
 		<div class="count-row" class:counted={entry} class:has-diff={diff}>
 			<div>
-				<b>{item.name}</b>
+				<b>{item.name}</b>{#if item.spec}<span class="spec">{item.spec}</span>{/if}
 				<div class="chg-sub">{app.categoryName(item.category_id)}・帳簿 {fmt(entry?.expected ?? item.stock)}{item.unit}</div>
 				{#if entry && Number(item.stock) !== entry.expected}
 					<div class="chg-sub">数えたあとに在庫が動いています（今 {fmt(item.stock)}{item.unit}）。確定すると差の分だけ直します。</div>

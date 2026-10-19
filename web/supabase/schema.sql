@@ -49,6 +49,7 @@ create table public.items (
 	id uuid primary key default gen_random_uuid(),
 	household_id uuid not null references public.households (id) on delete cascade,
 	name text not null check (char_length(name) between 1 and 100),
+	spec text not null default '' check (char_length(spec) <= 100),
 	-- 使われているカテゴリは削除できない（restrict）
 	category_id uuid not null references public.categories (id) on delete restrict,
 	unit text not null default '' check (char_length(unit) <= 20),
@@ -88,6 +89,10 @@ create table public.stock_events (
 	stock_after numeric,
 	unit_price numeric check (unit_price >= 0),
 	amount numeric,
+	-- 購入の値引金額・消費税・税抜金額（明細に書いてあるときだけ。amount は値引後の支払額）
+	discount numeric,
+	tax numeric,
+	amount_ex_tax numeric,
 	supplier text not null default '',
 	memo text not null default '',
 	cancelled boolean not null default false,
@@ -305,9 +310,9 @@ begin
 	if cat_name is null then raise exception 'カテゴリを選んでください。'; end if;
 
 	if p ->> 'id' is null or p ->> 'id' = '' then
-		insert into public.items (household_id, name, category_id, unit, stock, price, reorder_level, expiry,
+		insert into public.items (household_id, name, spec, category_id, unit, stock, price, reorder_level, expiry,
 			supplier, purpose, memo, features, how_to_use, cautions, crops, public_ref, updated_by)
-		values (p_household, trim(p ->> 'name'), (p ->> 'category_id')::uuid, coalesce(p ->> 'unit', ''),
+		values (p_household, trim(p ->> 'name'), trim(coalesce(p ->> 'spec', '')), (p ->> 'category_id')::uuid, coalesce(p ->> 'unit', ''),
 			coalesce((p ->> 'stock')::numeric, 0), coalesce((p ->> 'price')::numeric, 0),
 			nullif(p ->> 'reorder_level', '')::numeric, nullif(p ->> 'expiry', '')::date,
 			coalesce(p ->> 'supplier', ''), coalesce(p ->> 'purpose', ''), coalesce(p ->> 'memo', ''),
@@ -328,6 +333,7 @@ begin
 
 	update public.items set
 		name = trim(p ->> 'name'),
+		spec = trim(coalesce(p ->> 'spec', cur.spec)),
 		category_id = (p ->> 'category_id')::uuid,
 		unit = coalesce(p ->> 'unit', ''),
 		stock = coalesce((p ->> 'stock')::numeric, 0),
@@ -378,7 +384,8 @@ $$;
 -- 在庫の増減：「今の数に足す・引く」ので、同時に操作しても数がずれない
 -- =====================================================================
 create function public.move_stock(
-	p_item uuid, p_kind text, p_qty numeric, p_date date, p_unit_price numeric, p_supplier text, p_memo text
+	p_item uuid, p_kind text, p_qty numeric, p_date date, p_unit_price numeric, p_supplier text, p_memo text,
+	p_discount numeric default null, p_tax numeric default null
 ) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -421,9 +428,9 @@ begin
 			updated_at = now(), updated_by = auth.uid()
 		where i.id = p_item returning * into it;
 		insert into public.stock_events (household_id, item_id, item_name, category_name, type, event_date, qty,
-			stock_after, unit_price, amount, supplier, memo)
+			stock_after, unit_price, amount, discount, tax, supplier, memo)
 		values (it.household_id, it.id, it.name, coalesce(cat_name, ''), '入庫', d, delta, it.stock, v_price,
-			round(v_price * delta), v_sup, coalesce(p_memo, ''))
+			round(v_price * delta) - coalesce(nullif(p_discount, 0), 0), nullif(p_discount, 0), p_tax, v_sup, coalesce(p_memo, ''))
 		returning * into ev;
 	else
 		update public.items set stock = stock + delta, updated_at = now(), updated_by = auth.uid()
@@ -438,7 +445,8 @@ $$;
 
 -- 過去の購入を記録する（今の在庫は変えない）。p_precision が 'year' なら年だけ分かっている
 create function public.add_past_purchase(
-	p_item uuid, p_date date, p_precision text, p_qty numeric, p_unit_price numeric, p_supplier text, p_memo text
+	p_item uuid, p_date date, p_precision text, p_qty numeric, p_unit_price numeric, p_supplier text, p_memo text,
+	p_discount numeric default null, p_tax numeric default null
 ) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -456,10 +464,11 @@ begin
 	select name into cat_name from public.categories where id = cur.category_id;
 
 	insert into public.stock_events (household_id, item_id, item_name, category_name, type, event_date, date_precision,
-		qty, stock_after, unit_price, amount, supplier, memo)
+		qty, stock_after, unit_price, amount, discount, tax, supplier, memo)
 	values (cur.household_id, cur.id, cur.name, coalesce(cat_name, ''), '過去の購入', p_date,
 		case when p_precision = 'year' then 'year' else 'day' end, q, cur.stock, p_unit_price,
-		round(p_unit_price * q), coalesce(p_supplier, ''), coalesce(p_memo, ''))
+		round(p_unit_price * q) - coalesce(nullif(p_discount, 0), 0), nullif(p_discount, 0), p_tax,
+		coalesce(p_supplier, ''), coalesce(p_memo, ''))
 	returning * into ev;
 
 	-- 日付が分かっていて、いちばん新しい購入なら単価を更新する
