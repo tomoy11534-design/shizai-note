@@ -289,6 +289,20 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 .item-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: space-between; }
 .item-buttons { display: flex; gap: 6px; }
 
+/* 棚卸し */
+.count-row { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 6px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.count-row.counted { border-left: 4px solid var(--down); }
+.count-row.has-diff { background: var(--warn-bg); }
+.count-input { display: flex; align-items: center; gap: 6px; }
+.count-input input { width: 6.5em; text-align: right; }
+.count-input .unit { min-width: 1.5em; color: var(--text-2); }
+.count-diff { font-weight: bold; font-variant-numeric: tabular-nums; min-width: 4.5em; }
+.count-diff.up { color: var(--up); }
+.count-diff.down { color: var(--down); }
+.check { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
+/* スマホでは画面下のタブに隠れないよう、その上に止める */
+.stocktake-footer { position: sticky; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom)); z-index: 5; background: var(--card); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+
 .stepper { display: inline-flex; align-items: center; gap: 4px; }
 .stepper button {
   width: 40px;
@@ -406,6 +420,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 /* ===== タブレット・パソコン ===== */
 @media (min-width: 768px) {
   body { padding-bottom: 24px; }
+  .stocktake-footer { bottom: 0; }
 
   .tabs {
     position: sticky;

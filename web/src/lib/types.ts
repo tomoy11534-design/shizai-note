@@ -56,7 +56,7 @@ export interface Item {
 	updated_by: string | null;
 }
 
-export type EventType = '登録' | '編集' | '削除' | '入庫' | '出庫' | '調整' | '過去の購入' | '取消';
+export type EventType = '登録' | '編集' | '削除' | '入庫' | '出庫' | '調整' | '過去の購入' | '取消' | '棚卸し';
 
 export interface StockEvent {
 	id: string;
@@ -114,7 +114,10 @@ export interface AppStatus {
 // RPCの戻り値
 export interface MutationResult {
 	item?: Item | null;
+	items?: Item[];
 	events?: StockEvent[];
 	deleted_id?: string;
 	conflict?: boolean;
+	// 棚卸しで数えた品目の数
+	checked?: number;
 }

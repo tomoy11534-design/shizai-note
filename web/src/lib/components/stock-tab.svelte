@@ -1,16 +1,26 @@
 <script lang="ts">
-	import { app } from '#lib/app-state.svelte.js';
+	import { app, readJson } from '#lib/app-state.svelte.js';
 	import { costChange, publicChange } from '#lib/calc.js';
 	import { dictionaryText } from '#lib/dictionary.js';
+	import { draftKey, draftRows, type StocktakeDraft } from '#lib/stocktake.js';
 	import { chgText, downloadCsv, fmt, pctPlain, yen } from '#lib/format.js';
 	import type { Item } from '#lib/types.js';
 	import ChangeBadge from './change-badge.svelte';
+	import StocktakeView from './stocktake-view.svelte';
 	import Tile from './tile.svelte';
 
 	let search = $state('');
 	let category = $state('');
 	let supplier = $state('');
 	let status = $state('');
+
+	// 棚卸しの画面を開いているか。途中の下書きがあれば、件数を知らせる
+	let stocktaking = $state(false);
+	let draftCount = $derived.by(() => {
+		if (stocktaking || !app.householdId) return 0;
+		const d = readJson<StocktakeDraft>(draftKey(app.householdId));
+		return d ? draftRows(d, app.items).length : 0;
+	});
 
 	const thisYear = new Date().getFullYear();
 
@@ -57,6 +67,15 @@
 	}
 </script>
 
+{#if stocktaking}
+<StocktakeView onclose={() => (stocktaking = false)} />
+{:else}
+{#if draftCount}
+	<div class="panel attention">
+		<p>棚卸しの途中です（{draftCount} 品目を入力済み）。 <button type="button" class="btn btn-small" onclick={() => (stocktaking = true)}>続きから再開</button></p>
+	</div>
+{/if}
+
 <div class="tiles">
 	<Tile label="品目数" value="{list.length} 品目" sub={list.length === app.items.length ? '' : `全 ${app.items.length} 品目中`} />
 	<Tile label="在庫金額" value={yen(stockValue)} sub="表示中の資材の合計" />
@@ -87,7 +106,10 @@
 <div class="panel">
 	<div class="panel-head">
 		<h2>在庫一覧</h2>
-		<button type="button" class="btn btn-primary" onclick={() => (app.modal = { kind: 'item', id: null })}>＋ 資材を登録</button>
+		<div class="item-buttons">
+			<button type="button" class="btn" onclick={() => (stocktaking = true)}>📋 棚卸し</button>
+			<button type="button" class="btn btn-primary" onclick={() => (app.modal = { kind: 'item', id: null })}>＋ 資材を登録</button>
+		</div>
 	</div>
 	<div class="filters">
 		<input type="search" bind:value={search} placeholder="資材名・用途・メモ・購入先で検索" aria-label="検索" />
@@ -156,3 +178,4 @@
 	{/each}
 	<div class="list-foot"><button type="button" class="btn" onclick={exportCsv}>CSVで出力</button></div>
 </div>
+{/if}

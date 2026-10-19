@@ -2,7 +2,7 @@
 import type { Category, Household, Item, PublicSeries, StockEvent } from './types.js';
 
 export const PURCHASE_TYPES = ['入庫', '過去の購入'];
-export const CANCELABLE_TYPES = ['入庫', '出庫', '調整', '過去の購入'];
+export const CANCELABLE_TYPES = ['入庫', '出庫', '調整', '過去の購入', '棚卸し'];
 
 export interface Purchase {
 	event: StockEvent;

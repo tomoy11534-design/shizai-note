@@ -47,7 +47,7 @@ const TAB_KEY = 'shizai-note-tab';
 export const MAX_SERIES = 5;
 
 // localStorage は使えないこともあるので、失敗しても止まらないようにする
-function readJson<T>(key: string): T | null {
+export function readJson<T>(key: string): T | null {
 	try {
 		const raw = localStorage.getItem(key);
 		return raw ? (JSON.parse(raw) as T) : null;
@@ -56,7 +56,7 @@ function readJson<T>(key: string): T | null {
 	}
 }
 
-function writeJson(key: string, value: unknown) {
+export function writeJson(key: string, value: unknown) {
 	try {
 		localStorage.setItem(key, JSON.stringify(value));
 	} catch {
@@ -460,9 +460,20 @@ class AppState {
 
 	apply(res: MutationResult) {
 		if (res.item) this.items = upsertById(this.items, [res.item]);
+		if (res.items?.length) this.items = upsertById(this.items, res.items);
 		if (res.deleted_id) this.items = this.items.filter((i) => i.id !== res.deleted_id);
 		if (res.events?.length) this.events = upsertById(this.events, res.events);
 		this.writeCache();
+	}
+
+	// ----- 棚卸し -----
+	// 数えた数に合わせて、差がある資材の在庫をまとめて直す
+	stocktake(counts: { item_id: string; counted: number; expected: number }[], memo: string) {
+		return this.run(async () => {
+			const res = await this.rpc('stocktake', { p_household: this.householdId, p_counts: counts, p_memo: memo });
+			this.apply(res);
+			return res;
+		});
 	}
 
 	// ----- 資材 -----

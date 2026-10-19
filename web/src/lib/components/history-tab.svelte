@@ -54,7 +54,7 @@
 		<select bind:value={type} onchange={() => (limit = 200)} aria-label="種類">
 			<option value="">すべての種類</option>
 			<option value="purchase">購入（入庫・過去の購入）</option>
-			{#each ['入庫', '出庫', '調整', '過去の購入', '登録', '編集', '削除', '取消'] as t (t)}<option value={t}>{t === '調整' ? '数量の調整' : t}</option>{/each}
+			{#each ['入庫', '出庫', '調整', '棚卸し', '過去の購入', '登録', '編集', '削除', '取消'] as t (t)}<option value={t}>{t === '調整' ? '数量の調整' : t}</option>{/each}
 		</select>
 	</div>
 	{#each list.slice(0, limit) as e (e.id)}
