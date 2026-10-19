@@ -7,6 +7,7 @@
 	import ItemForm from '#lib/components/item-form.svelte';
 	import LoginView from '#lib/components/login-view.svelte';
 	import ManualTab from '#lib/components/manual-tab.svelte';
+	import MergeCategoryForm from '#lib/components/merge-category-form.svelte';
 	import Modal from '#lib/components/modal.svelte';
 	import MoveForm from '#lib/components/move-form.svelte';
 	import PastForm from '#lib/components/past-form.svelte';
@@ -34,7 +35,7 @@
 	let modalTitle = $derived.by(() => {
 		const m = app.modal;
 		if (!m) return '';
-		const name = 'id' in m && m.id ? (m.kind === 'rename-category' ? '' : (app.findItem(m.id)?.name ?? '')) : '';
+		const name = 'id' in m && m.id ? (m.kind === 'rename-category' || m.kind === 'merge-category' ? '' : (app.findItem(m.id)?.name ?? '')) : '';
 		switch (m.kind) {
 			case 'item':
 				return m.id ? '資材を編集' : '資材を登録';
@@ -48,6 +49,8 @@
 				return `説明書を追加：${name}`;
 			case 'rename-category':
 				return 'カテゴリ名の変更';
+			case 'merge-category':
+				return 'カテゴリをまとめる';
 		}
 	});
 
@@ -111,7 +114,8 @@
 				{:else if m.kind === 'past'}<PastForm id={m.id} />
 				{:else if m.kind === 'detail'}<ItemDetail id={m.id} />
 				{:else if m.kind === 'upload'}<UploadForm id={m.id} back={m.back} />
-				{:else if m.kind === 'rename-category'}<RenameCategoryForm id={m.id} />{/if}
+				{:else if m.kind === 'rename-category'}<RenameCategoryForm id={m.id} />
+				{:else if m.kind === 'merge-category'}<MergeCategoryForm id={m.id} />{/if}
 			{/key}
 		</Modal>
 	{/if}

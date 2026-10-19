@@ -24,7 +24,8 @@ export type ModalState =
 	| { kind: 'past'; id: string }
 	| { kind: 'detail'; id: string }
 	| { kind: 'upload'; id: string; back: boolean }
-	| { kind: 'rename-category'; id: string };
+	| { kind: 'rename-category'; id: string }
+	| { kind: 'merge-category'; id: string };
 
 interface Dialog {
 	kind: 'confirm' | 'prompt';
@@ -602,6 +603,14 @@ class AppState {
 				const { error } = await supabase.from('categories').update({ sort_order: x.order }).eq('id', x.c.id);
 				if (error) throw new Error(friendly(error));
 			}
+			await this.reloadCategories();
+		});
+	}
+
+	// カテゴリ from の資材を to へ移して、from を削除する
+	mergeCategory(from: string, to: string) {
+		return this.run(async () => {
+			this.apply(await this.rpc('merge_category', { p_from: from, p_to: to }));
 			await this.reloadCategories();
 		});
 	}

@@ -138,6 +138,7 @@
 			<div class="cat-main">
 				<span class="cat-name">{c.name} <span class="chg-sub">{app.items.filter((x) => x.category_id === c.id).length}品目</span></span>
 				<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'rename-category', id: c.id })}>名前の変更</button>
+				{#if app.categories.length > 1}<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'merge-category', id: c.id })}>まとめる</button>{/if}
 				<button type="button" class="btn btn-small btn-danger" onclick={() => deleteCategory(c.id, c.name)}>削除</button>
 			</div>
 			<label class="cat-public">
