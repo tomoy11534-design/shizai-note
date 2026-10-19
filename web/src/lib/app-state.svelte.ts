@@ -554,14 +554,19 @@ class AppState {
 		this.writeCache();
 	}
 
+	// カテゴリを追加して、追加したカテゴリを返す
 	addCategory(name: string) {
 		return this.run(async () => {
 			const max = Math.max(0, ...this.categories.map((c) => c.sort_order));
 			const { error } = await supabase
 				.from('categories')
 				.insert({ household_id: this.householdId, name: name.trim(), sort_order: max + 1, public_ref: 'idx:農業生産資材総合' });
-			if (error) throw new Error(friendly(error));
+			// 同じ名前を家族が先に追加していたときは、エラーにせずそちらを使う
+			if (error && error.code !== '23505') throw new Error(friendly(error));
 			await this.reloadCategories();
+			const added = this.categories.find((c) => c.name === name.trim());
+			if (!added) throw new Error('カテゴリを追加できませんでした。');
+			return added;
 		});
 	}
 

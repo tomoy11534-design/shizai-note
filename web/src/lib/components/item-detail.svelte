@@ -4,6 +4,7 @@
 	import { priceChart } from '#lib/charts.js';
 	import { chgText, fmt, periodText, yen } from '#lib/format.js';
 	import ChangeBadge from './change-badge.svelte';
+	import DictionaryView from './dictionary-view.svelte';
 	import FileCard from './file-card.svelte';
 	import HistoryRow from './history-row.svelte';
 	import LineChart from './line-chart.svelte';
@@ -54,6 +55,7 @@
 	</div>
 
 	<p class="purpose" class:empty-purpose={!item.purpose}><span class="purpose-label">用途</span>{item.purpose || '未入力（「編集」から入力できます）'}</p>
+	<DictionaryView {item} />
 
 	<h3>取扱説明書（{files.length}件）</h3>
 	{#if files.length}

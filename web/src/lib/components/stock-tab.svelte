@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { app } from '#lib/app-state.svelte.js';
 	import { costChange, publicChange } from '#lib/calc.js';
+	import { dictionaryText } from '#lib/dictionary.js';
 	import { chgText, downloadCsv, fmt, pctPlain, yen } from '#lib/format.js';
 	import type { Item } from '#lib/types.js';
 	import ChangeBadge from './change-badge.svelte';
@@ -19,7 +20,7 @@
 				if (category && item.category_id !== category) return false;
 				if (supplier && item.supplier !== supplier) return false;
 				const q = search.trim().toLowerCase();
-				if (q && !`${item.name} ${item.memo} ${item.supplier} ${item.purpose}`.toLowerCase().includes(q)) return false;
+				if (q && !`${item.name} ${item.memo} ${item.supplier} ${item.purpose} ${dictionaryText(item)}`.toLowerCase().includes(q)) return false;
 				if (status) {
 					const keys = app.tagsOf(item).map((t) => t.key);
 					if (status === 'attention' ? !keys.length : !keys.includes(status as never)) return false;

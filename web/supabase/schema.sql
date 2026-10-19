@@ -59,6 +59,11 @@ create table public.items (
 	supplier text not null default '' check (char_length(supplier) <= 100),
 	purpose text not null default '' check (char_length(purpose) <= 1000),
 	memo text not null default '' check (char_length(memo) <= 1000),
+	-- 資材の辞書（特徴・使い方・注意点・対象の作物）
+	features text not null default '' check (char_length(features) <= 1000),
+	how_to_use text not null default '' check (char_length(how_to_use) <= 1000),
+	cautions text not null default '' check (char_length(cautions) <= 1000),
+	crops text not null default '' check (char_length(crops) <= 200),
 	public_ref text not null default '',
 	last_purchase_date date,
 	created_at timestamptz not null default now(),
@@ -301,12 +306,13 @@ begin
 
 	if p ->> 'id' is null or p ->> 'id' = '' then
 		insert into public.items (household_id, name, category_id, unit, stock, price, reorder_level, expiry,
-			supplier, purpose, memo, public_ref, updated_by)
+			supplier, purpose, memo, features, how_to_use, cautions, crops, public_ref, updated_by)
 		values (p_household, trim(p ->> 'name'), (p ->> 'category_id')::uuid, coalesce(p ->> 'unit', ''),
 			coalesce((p ->> 'stock')::numeric, 0), coalesce((p ->> 'price')::numeric, 0),
 			nullif(p ->> 'reorder_level', '')::numeric, nullif(p ->> 'expiry', '')::date,
 			coalesce(p ->> 'supplier', ''), coalesce(p ->> 'purpose', ''), coalesce(p ->> 'memo', ''),
-			coalesce(p ->> 'public_ref', ''), auth.uid())
+			coalesce(p ->> 'features', ''), coalesce(p ->> 'how_to_use', ''), coalesce(p ->> 'cautions', ''),
+			coalesce(p ->> 'crops', ''), coalesce(p ->> 'public_ref', ''), auth.uid())
 		returning * into it;
 		insert into public.stock_events (household_id, item_id, item_name, category_name, type, qty, stock_after, unit_price, supplier)
 		values (p_household, it.id, it.name, cat_name, '登録', it.stock, it.stock, it.price, it.supplier)
@@ -331,6 +337,11 @@ begin
 		supplier = coalesce(p ->> 'supplier', ''),
 		purpose = coalesce(p ->> 'purpose', ''),
 		memo = coalesce(p ->> 'memo', ''),
+		-- 辞書の欄がない古い画面から保存されたときは、今の内容を残す
+		features = coalesce(p ->> 'features', cur.features),
+		how_to_use = coalesce(p ->> 'how_to_use', cur.how_to_use),
+		cautions = coalesce(p ->> 'cautions', cur.cautions),
+		crops = coalesce(p ->> 'crops', cur.crops),
 		public_ref = coalesce(p ->> 'public_ref', ''),
 		updated_at = now(),
 		updated_by = auth.uid()

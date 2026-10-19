@@ -46,6 +46,10 @@ export interface Item {
 	supplier: string;
 	purpose: string;
 	memo: string;
+	features: string;
+	how_to_use: string;
+	cautions: string;
+	crops: string;
 	public_ref: string;
 	last_purchase_date: string | null;
 	updated_at: string;

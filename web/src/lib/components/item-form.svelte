@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { app } from '#lib/app-state.svelte.js';
+	import { findSimilarCategory } from '#lib/category.js';
+	import { DICT_FIELDS } from '#lib/dictionary.js';
 	import { yen } from '#lib/format.js';
 	import type { Item } from '#lib/types.js';
 	import PublicRefSelect from './public-ref-select.svelte';
@@ -22,7 +24,11 @@
 			supplier: item?.supplier ?? '',
 			public_ref: item?.public_ref ?? '',
 			purpose: item?.purpose ?? '',
-			memo: item?.memo ?? ''
+			memo: item?.memo ?? '',
+			features: item?.features ?? '',
+			how_to_use: item?.how_to_use ?? '',
+			cautions: item?.cautions ?? '',
+			crops: item?.crops ?? ''
 		};
 	}
 
@@ -33,13 +39,62 @@
 	let conflict = $state('');
 	let saving = $state(false);
 
+	// カテゴリをその場で追加する
+	const NEW_CATEGORY = '__new__';
+	let addingCategory = $state(false);
+	let newCategory = $state('');
+	let similar = $derived(findSimilarCategory(newCategory, app.categories));
+
+	function pickCategory(e: Event & { currentTarget: HTMLSelectElement }) {
+		if (e.currentTarget.value !== NEW_CATEGORY) {
+			form.category_id = e.currentTarget.value;
+			return;
+		}
+		// 「＋ 新しいカテゴリを追加…」は選んだままにせず、入力欄に切り替える
+		e.currentTarget.value = form.category_id;
+		newCategory = '';
+		addingCategory = true;
+	}
+
+	function useCategory(id: string) {
+		form.category_id = id;
+		addingCategory = false;
+	}
+
+	async function addCategory() {
+		const name = newCategory.trim();
+		if (!name) return app.toast('カテゴリ名を入力してください。', true);
+		if (similar?.same) return useCategory(similar.category.id);
+		try {
+			const added = await app.addCategory(name);
+			useCategory(added.id);
+			app.toast(`カテゴリ「${added.name}」を追加しました。`);
+		} catch {
+			// お知らせ済み
+		}
+	}
+
+	// 入力欄で Enter を押しても、資材の保存ではなくカテゴリの追加にする
+	function onCategoryKey(e: KeyboardEvent) {
+		if (e.key === 'Enter' && !e.isComposing) {
+			e.preventDefault();
+			addCategory();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			addingCategory = false;
+		}
+	}
+
 	// 変更内容を人が読める形にまとめる（履歴のメモに残す）
 	function describe(before: ReturnType<typeof toForm>, after: ReturnType<typeof toForm>) {
-		const labels: Record<string, string> = { name: '資材名', category_id: 'カテゴリ', unit: '単位', stock: '在庫', price: '単価', reorder_level: '発注の目安', expiry: '使用期限', supplier: '購入先', public_ref: '比較データ', purpose: '用途', memo: 'メモ' };
+		const labels: Record<string, string> = { name: '資材名', category_id: 'カテゴリ', unit: '単位', stock: '在庫', price: '単価', reorder_level: '発注の目安', expiry: '使用期限', supplier: '購入先', public_ref: '比較データ', purpose: '用途', memo: 'メモ', ...Object.fromEntries(DICT_FIELDS.map((f) => [f.key, f.label])) };
+		// 長い文章の欄は「〜を変更」とだけ残す
+		const longText = ['memo', 'purpose', 'public_ref', ...DICT_FIELDS.map((f) => f.key)];
 		const show = (k: string, v: unknown) => (k === 'category_id' ? app.categoryName(String(v)) : v === '' ? '（なし）' : String(v));
 		return Object.keys(labels)
 			.filter((k) => String(before[k as keyof typeof before]) !== String(after[k as keyof typeof after]))
-			.map((k) => (['memo', 'purpose', 'public_ref'].includes(k) ? `${labels[k]}を変更` : `${labels[k]} ${show(k, before[k as keyof typeof before])}→${show(k, after[k as keyof typeof after])}`))
+			.map((k) => (longText.includes(k) ?`${labels[k]}を変更` : `${labels[k]} ${show(k, before[k as keyof typeof before])}→${show(k, after[k as keyof typeof after])}`))
 			.join('、');
 	}
 
@@ -78,9 +133,30 @@
 <form class="form-grid" autocomplete="off" onsubmit={submit}>
 	{#if conflict}<div class="conflict full">{conflict}</div>{/if}
 	<label class="field full"><span>資材名<span class="req">必須</span></span><input bind:value={form.name} required maxlength="100" placeholder="例：化成肥料 8-8-8 20kg" /></label>
-	<label class="field half"><span>カテゴリ</span>
-		<select bind:value={form.category_id}>{#each app.categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}</select>
-	</label>
+	{#if addingCategory}
+		<div class="field full">
+			<label for="new-category"><span>新しいカテゴリ</span></label>
+			<div class="row-form">
+				<!-- svelte-ignore a11y_autofocus -->
+				<input id="new-category" bind:value={newCategory} onkeydown={onCategoryKey} maxlength="30" placeholder="例：土壌改良材" autofocus />
+				<button type="button" class="btn btn-primary" onclick={addCategory} disabled={!newCategory.trim()}>{similar?.same ? 'そちらを使う' : '追加'}</button>
+				<button type="button" class="btn" onclick={() => (addingCategory = false)}>やめる</button>
+			</div>
+			{#if similar}
+				<p class="conflict" role="status">
+					{similar.same ? `「${similar.category.name}」がすでにあります。` : `似た名前の「${similar.category.name}」があります。`}
+					{#if !similar.same}<button type="button" class="btn btn-small" onclick={() => useCategory(similar!.category.id)}>「{similar.category.name}」を使う</button>{/if}
+				</p>
+			{/if}
+		</div>
+	{:else}
+		<label class="field half"><span>カテゴリ</span>
+			<select value={form.category_id} onchange={pickCategory}>
+				{#each app.categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+				<option value={NEW_CATEGORY}>＋ 新しいカテゴリを追加…</option>
+			</select>
+		</label>
+	{/if}
 	<label class="field half"><span>単位</span><input bind:value={form.unit} list="unit-list" maxlength="20" placeholder="例：袋" /></label>
 	<label class="field"><span>在庫数</span><input type="number" min="0" step="any" inputmode="decimal" bind:value={form.stock} /></label>
 	<label class="field"><span>単価（円）</span><input type="number" min="0" step="any" inputmode="decimal" bind:value={form.price} /></label>
@@ -90,6 +166,16 @@
 	<label class="field half"><span>購入先</span><input bind:value={form.supplier} list="supplier-list" maxlength="100" placeholder="例：JA" /></label>
 	<label class="field half"><span>比べる全国データ</span><PublicRefSelect bind:value={form.public_ref} withInherit /></label>
 	<label class="field full"><span>用途 <small>何のために使うか</small></span><textarea bind:value={form.purpose} rows="2" maxlength="1000" placeholder="例：トマトの元肥。10aあたり4袋"></textarea></label>
+	<p class="form-section full"><b>資材の辞書</b>　特徴や使い方を書いておくと、説明書タブで一覧・検索できます</p>
+	{#each DICT_FIELDS as f (f.key)}
+		<label class="field full"><span>{f.label}</span>
+			{#if f.rows === 1}
+				<input bind:value={form[f.key]} maxlength={f.max} placeholder={f.placeholder} />
+			{:else}
+				<textarea bind:value={form[f.key]} rows={f.rows} maxlength={f.max} placeholder={f.placeholder}></textarea>
+			{/if}
+		</label>
+	{/each}
 	<label class="field full"><span>メモ</span><textarea bind:value={form.memo} rows="2" maxlength="1000"></textarea></label>
 	<div class="form-actions full">
 		<button type="submit" class="btn btn-primary" disabled={saving}>{id ? '更新する' : '登録する'}</button>

@@ -20,7 +20,7 @@
 	const TABS: { id: Tab; icon: string; label: string }[] = [
 		{ id: 'stock', icon: '📦', label: '在庫' },
 		{ id: 'price', icon: '📈', label: '価格' },
-		{ id: 'manual', icon: '📎', label: '説明書' },
+		{ id: 'manual', icon: '📖', label: '辞書' },
 		{ id: 'history', icon: '📝', label: '履歴' },
 		{ id: 'summary', icon: '📊', label: '集計' },
 		{ id: 'settings', icon: '⚙', label: '設定' }
