@@ -281,6 +281,15 @@ class AppState {
 		if (error) throw new Error(friendly(error));
 	}
 
+	// Googleアカウントでログインする（Googleの画面に移って、戻ってくるとログイン済みになる）
+	async signInWithGoogle() {
+		const { error } = await supabase.auth.signInWithOAuth({
+			provider: 'google',
+			options: { redirectTo: location.origin, queryParams: { prompt: 'select_account' } }
+		});
+		if (error) throw new Error(friendly(error));
+	}
+
 	async verifyCode(email: string, token: string) {
 		const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
 		if (error) throw new Error('コードが正しくないか、期限が切れています。もう一度メールを送ってください。');

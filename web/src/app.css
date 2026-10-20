@@ -300,6 +300,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 .count-diff { font-weight: bold; font-variant-numeric: tabular-nums; min-width: 4.5em; }
 .count-diff.up { color: var(--up); }
 .count-diff.down { color: var(--down); }
+/* ログイン */
+.btn-google { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--card); font-weight: bold; }
+.or { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.8rem; margin: 12px 0 4px; }
+.or::before, .or::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
 /* スプレッドシート連携 */
 .sync-status { margin: 6px 0; padding-left: 1.2em; font-size: 0.88rem; }
 .token { font-family: ui-monospace, monospace; font-size: 0.95rem; word-break: break-all; user-select: all; margin: 4px 0 8px; }
