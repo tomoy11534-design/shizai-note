@@ -88,7 +88,7 @@
 
 <div class="panel">
 	<h2>あなたの表示名</h2>
-	<p class="note">ログイン中：{app.session?.user.email}{app.isOwner ? '（農園の所有者）' : ''}</p>
+	<p class="note">{app.demo ? 'デモ版で表示しています' : `ログイン中：${app.session?.user.email}`}{app.isOwner ? '（農園の所有者）' : ''}</p>
 	<form class="row-form" onsubmit={saveName}>
 		<input bind:value={myName} maxlength="20" placeholder="例：たろう" aria-label="表示名" />
 		<button type="submit" class="btn btn-primary">保存</button>
@@ -197,5 +197,5 @@
 			</select>
 		</label>
 	{/if}
-	<div class="form-actions"><button type="button" class="btn" onclick={() => app.signOut()}>ログアウト</button></div>
+	<div class="form-actions"><button type="button" class="btn" onclick={() => app.signOut()}>{app.demo ? 'デモを終わる' : 'ログアウト'}</button></div>
 </div>

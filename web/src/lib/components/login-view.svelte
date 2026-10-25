@@ -72,4 +72,9 @@
 		{/if}
 		{#if error}<p class="conflict">{error}</p>{/if}
 	</div>
+	<div class="panel">
+		<h2>ログインせずに試す</h2>
+		<p class="note">見本の農園のデータで、在庫・価格の変動・辞書などの画面を見られます。操作しても保存はされません。</p>
+		<button type="button" class="btn" onclick={() => app.startDemo()}>デモを見る</button>
+	</div>
 </div>

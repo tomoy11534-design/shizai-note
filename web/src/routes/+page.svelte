@@ -64,7 +64,7 @@
 
 {#if !app.authReady}
 	<p class="loading">読み込んでいます…</p>
-{:else if !app.session}
+{:else if !app.session && !app.demo}
 	<header class="app-header"><h1>資材ノート</h1></header>
 	<LoginView />
 {:else if !app.householdId}
@@ -78,6 +78,13 @@
 			<button type="button" class="icon-btn" title="最新に更新" aria-label="最新に更新" onclick={() => app.loadHousehold()}>⟳</button>
 		</div>
 	</header>
+
+	{#if app.demo}
+		<div class="demo-banner" role="note">
+			<span>デモ版です。見本のデータで自由に操作できます（保存はされず、開き直すと元に戻ります）。</span>
+			<button type="button" class="btn btn-small" onclick={() => app.exitDemo()}>デモを終わる</button>
+		</div>
+	{/if}
 
 	<div class="tabs" role="tablist" aria-label="画面の切り替え">
 		{#each TABS as t (t.id)}

@@ -474,6 +474,8 @@ button.modal-backdrop { border: none; padding: 0; cursor: default; width: 100%; 
 .modal-body h3 { font-size: 1rem; margin: 14px 0 6px; }
 .pre { white-space: pre-wrap; }
 .center-box { max-width: 480px; margin: 24px auto; padding: 0 12px; }
+.center-box .panel + .panel { margin-top: 16px; }
+.demo-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px 12px; background: var(--warn-bg); color: var(--warn); font-size: 0.85rem; }
 .link { background: none; border: none; padding: 0; color: var(--brand); text-decoration: underline; cursor: pointer; font: inherit; }
 .member-list { list-style: none; margin: 0 0 10px; padding: 0; }
 .member-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--grid); }

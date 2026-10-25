@@ -1,6 +1,7 @@
 // アプリ全体の状態（データの読み込み・保存・家族の操作の同期）
 import type { PostgrestError, RealtimeChannel, Session } from '@supabase/supabase-js';
 import { compare, itemTags, publicRefOf, purchasesByItem, todayJst, yearStatsOf, type Comparison, type Tag } from './calc.js';
+import { DEMO_USER, demoData, demoRpc } from './demo.js';
 import { errorMessage } from './format.js';
 import { MANUAL_BUCKET, supabase } from './supabase.js';
 import type {
@@ -95,6 +96,8 @@ class AppState {
 	authReady = $state(false);
 	memberships = $state.raw<Membership[]>([]);
 	householdId = $state<string | null>(null);
+	// デモ版（ログインせずに見本の農園を見る。何も保存しない）
+	demo = $state(false);
 
 	// ----- 農園のデータ（大きいので $state.raw にして、変えるときは丸ごと入れ替える） -----
 	household = $state.raw<Household | null>(null);
@@ -140,8 +143,8 @@ class AppState {
 	pubMap = $derived(new Map(this.publicSeries.map((s) => [s.key, s])));
 	purchases = $derived(purchasesByItem(this.events));
 	stats = $derived(new Map([...this.purchases].map(([id, list]) => [id, yearStatsOf(list)])));
-	isOwner = $derived(!!this.household && this.household.owner_id === this.session?.user.id);
-	myId = $derived(this.session?.user.id ?? '');
+	myId = $derived(this.demo ? DEMO_USER : (this.session?.user.id ?? ''));
+	isOwner = $derived(!!this.household && this.household.owner_id === this.myId);
 	suppliers = $derived(
 		[...new Set([...this.items.map((i) => i.supplier), ...this.events.map((e) => e.supplier)].filter(Boolean))].sort((a, b) =>
 			a.localeCompare(b, 'ja')
@@ -230,13 +233,18 @@ class AppState {
 
 	setTab(tab: Tab) {
 		this.ui.tab = tab;
-		writeJson(TAB_KEY, tab);
+		if (!this.demo) writeJson(TAB_KEY, tab);
 	}
 
 	// ----- ログイン -----
 	async initAuth() {
 		const saved = readJson<Tab>(TAB_KEY);
 		if (saved) this.ui.tab = saved;
+		// URLに ?demo が付いていたら、ログインせずにデモ版を開く
+		if (new URLSearchParams(location.search).has('demo')) {
+			await this.startDemo();
+			return;
+		}
 		const { data } = await supabase.auth.getSession();
 		this.session = data.session;
 		supabase.auth.onAuthStateChange((event, session) => {
@@ -295,7 +303,45 @@ class AppState {
 		if (error) throw new Error('コードが正しくないか、期限が切れています。もう一度メールを送ってください。');
 	}
 
+	// ----- デモ版 -----
+	async startDemo() {
+		const d = demoData();
+		this.demo = true;
+		// デモは在庫の画面から見せる
+		this.ui.tab = 'stock';
+		this.householdId = d.household.id;
+		this.household = d.household;
+		this.members = d.members;
+		this.categories = d.categories;
+		this.items = d.items;
+		this.events = d.events;
+		this.loaded = true;
+		this.lastLoaded = Date.now();
+		this.authReady = true;
+		if (!new URLSearchParams(location.search).has('demo')) history.replaceState(null, '', '?demo');
+		// 全国データはログインしなくても見られる窓口から取る（公開されている統計なので）
+		try {
+			const res = await fetch('/api/demo/public-data');
+			if (!res.ok) throw new Error(String(res.status));
+			const body = (await res.json()) as { status: AppStatus | null; series: PublicSeries[] };
+			this.status = body.status;
+			this.publicSeries = body.series;
+		} catch {
+			this.toast('全国データを読み込めませんでした。全国との比較は表示されません。', true);
+		}
+	}
+
+	exitDemo() {
+		location.href = location.pathname;
+	}
+
+	// デモ版で使えない操作（メール・ファイル・サーバーを使うもの）
+	private noDemo() {
+		if (this.demo) throw new Error('デモ版では使えません。実際の画面では、ここから操作できます。');
+	}
+
 	async signOut() {
+		if (this.demo) return this.exitDemo();
 		await supabase.auth.signOut();
 		this.reset();
 	}
@@ -350,7 +396,7 @@ class AppState {
 	}
 
 	private writeCache() {
-		if (!this.householdId) return;
+		if (!this.householdId || this.demo) return;
 		writeJson(CACHE_PREFIX + this.householdId, {
 			household: this.household,
 			members: this.members,
@@ -380,7 +426,7 @@ class AppState {
 
 	async loadHousehold() {
 		const h = this.householdId;
-		if (!h) return;
+		if (!h || this.demo) return;
 		// 保存中に読み込むと、画面が一瞬古い値に戻るので、保存が終わってから読む
 		if (this.pending > 0) {
 			this.reloadAfterPending = true;
@@ -471,6 +517,7 @@ class AppState {
 	}
 
 	private async rpc(name: string, args: Record<string, unknown>): Promise<MutationResult> {
+		if (this.demo) return demoRpc(this, name, args);
 		const { data, error } = await supabase.rpc(name, args);
 		if (error) throw new Error(friendly(error));
 		return (data ?? {}) as MutationResult;
@@ -579,6 +626,7 @@ class AppState {
 
 	// ----- カテゴリ -----
 	private async reloadCategories() {
+		if (this.demo) return;
 		const { data, error } = await supabase.from('categories').select('*').eq('household_id', this.householdId!).order('sort_order');
 		if (error) throw new Error(friendly(error));
 		this.categories = data as Category[];
@@ -589,6 +637,13 @@ class AppState {
 	addCategory(name: string) {
 		return this.run(async () => {
 			const max = Math.max(0, ...this.categories.map((c) => c.sort_order));
+			if (this.demo) {
+				const found = this.categories.find((c) => c.name === name.trim());
+				if (found) return found;
+				const added: Category = { id: crypto.randomUUID(), household_id: this.householdId!, name: name.trim(), sort_order: max + 1, public_ref: 'idx:農業生産資材総合' };
+				this.categories = [...this.categories, added];
+				return added;
+			}
 			const { error } = await supabase
 				.from('categories')
 				.insert({ household_id: this.householdId, name: name.trim(), sort_order: max + 1, public_ref: 'idx:農業生産資材総合' });
@@ -603,6 +658,13 @@ class AppState {
 
 	renameCategory(id: string, name: string) {
 		return this.run(async () => {
+			if (this.demo) {
+				if (this.categories.some((c) => c.id !== id && c.name === name.trim())) throw new Error('同じ名前がすでにあります。');
+				const old = this.categoryName(id);
+				this.categories = this.categories.map((c) => (c.id === id ? { ...c, name: name.trim() } : c));
+				this.events = this.events.map((e) => (e.category_name === old ? { ...e, category_name: name.trim() } : e));
+				return;
+			}
 			const { error } = await supabase.from('categories').update({ name: name.trim() }).eq('id', id);
 			if (error) throw new Error(friendly(error));
 			await this.reloadCategories();
@@ -618,6 +680,7 @@ class AppState {
 			[list[i], list[j]] = [list[j], list[i]];
 			// 並び順を振り直して保存する
 			const changed = list.map((c, n) => ({ c, order: n + 1 })).filter((x) => x.c.sort_order !== x.order);
+			if (this.demo) return void (this.categories = list.map((c, n) => ({ ...c, sort_order: n + 1 })));
 			for (const x of changed) {
 				const { error } = await supabase.from('categories').update({ sort_order: x.order }).eq('id', x.c.id);
 				if (error) throw new Error(friendly(error));
@@ -630,12 +693,23 @@ class AppState {
 	mergeCategory(from: string, to: string) {
 		return this.run(async () => {
 			this.apply(await this.rpc('merge_category', { p_from: from, p_to: to }));
+			if (this.demo) {
+				// 過去の記録のカテゴリ名もそろえて、まとめた元のカテゴリを消す
+				const src = this.categoryName(from);
+				const dst = this.categoryName(to);
+				this.events = this.events.map((e) => (e.category_name === src ? { ...e, category_name: dst } : e));
+				this.categories = this.categories.filter((c) => c.id !== from);
+			}
 			await this.reloadCategories();
 		});
 	}
 
 	deleteCategory(id: string) {
 		return this.run(async () => {
+			if (this.demo) {
+				if (this.items.some((i) => i.category_id === id)) throw new Error('このカテゴリを使っている資材があるため削除できません。先に別のカテゴリへ変更してください。');
+				return void (this.categories = this.categories.filter((c) => c.id !== id));
+			}
 			const { error } = await supabase.from('categories').delete().eq('id', id);
 			if (error) throw new Error(friendly(error));
 			await this.reloadCategories();
@@ -644,6 +718,7 @@ class AppState {
 
 	setCategoryPublic(id: string, ref: string) {
 		return this.run(async () => {
+			if (this.demo) return void (this.categories = this.categories.map((c) => (c.id === id ? { ...c, public_ref: ref } : c)));
 			const { error } = await supabase.from('categories').update({ public_ref: ref }).eq('id', id);
 			if (error) throw new Error(friendly(error));
 			await this.reloadCategories();
@@ -653,6 +728,7 @@ class AppState {
 	// ----- 農園の設定・家族 -----
 	saveHousehold(p: Partial<Household>) {
 		return this.run(async () => {
+			if (this.demo) return void (this.household = { ...this.household!, ...p });
 			const { data, error } = await supabase.from('households').update(p).eq('id', this.householdId!).select().single();
 			if (error) throw new Error(friendly(error));
 			this.household = data as Household;
@@ -662,8 +738,10 @@ class AppState {
 
 	setDisplayName(name: string) {
 		return this.run(async () => {
-			const { error } = await supabase.rpc('set_display_name', { p_household: this.householdId, p_name: name });
-			if (error) throw new Error(friendly(error));
+			if (!this.demo) {
+				const { error } = await supabase.rpc('set_display_name', { p_household: this.householdId, p_name: name });
+				if (error) throw new Error(friendly(error));
+			}
 			this.members = this.members.map((m) => (m.user_id === this.myId ? { ...m, display_name: name.trim().slice(0, 20) } : m));
 			this.writeCache();
 		});
@@ -671,6 +749,7 @@ class AppState {
 
 	invite(email: string) {
 		return this.run(async () => {
+			this.noDemo();
 			const e = email.trim().toLowerCase();
 			const { error } = await supabase.from('household_invites').insert({ household_id: this.householdId, email: e });
 			if (error) throw new Error(friendly(error));
@@ -681,6 +760,7 @@ class AppState {
 
 	cancelInvite(email: string) {
 		return this.run(async () => {
+			this.noDemo();
 			const { error } = await supabase.from('household_invites').delete().eq('household_id', this.householdId!).eq('email', email);
 			if (error) throw new Error(friendly(error));
 			this.invites = this.invites.filter((i) => i.email !== email);
@@ -689,6 +769,7 @@ class AppState {
 
 	removeMember(userId: string) {
 		return this.run(async () => {
+			this.noDemo();
 			const { error } = await supabase.from('household_members').delete().eq('household_id', this.householdId!).eq('user_id', userId);
 			if (error) throw new Error(friendly(error));
 			this.members = this.members.filter((m) => m.user_id !== userId);
@@ -698,6 +779,7 @@ class AppState {
 	// 全国データを今すぐ取得する（サーバーで農林水産省のExcelを読む）
 	async refreshPublic() {
 		return this.run(async () => {
+			this.noDemo();
 			const res = await fetch('/api/public-data/refresh', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${this.session?.access_token ?? ''}` }
@@ -712,6 +794,7 @@ class AppState {
 	// ----- 取扱説明書 -----
 	uploadManual(itemId: string, file: { blob: Blob; name: string; type: string }, title: string) {
 		return this.run(async () => {
+			this.noDemo();
 			const item = this.findItem(itemId);
 			if (!item) throw new Error('この資材は、ほかの人がすでに削除しています。');
 			const ext = (file.name.match(/\.[A-Za-z0-9]+$/)?.[0] ?? '').toLowerCase();
@@ -745,6 +828,7 @@ class AppState {
 
 	renameManual(id: string, title: string) {
 		return this.run(async () => {
+			this.noDemo();
 			const { data, error } = await supabase.from('manuals').update({ title: title.trim().slice(0, 100) }).eq('id', id).select().single();
 			if (error) throw new Error(friendly(error));
 			this.manuals = upsertById(this.manuals, [data as Manual]);
@@ -754,6 +838,7 @@ class AppState {
 
 	deleteManual(id: string) {
 		return this.run(async () => {
+			this.noDemo();
 			const m = this.manuals.find((x) => x.id === id);
 			if (!m) return;
 			const { error } = await supabase.from('manuals').delete().eq('id', id);

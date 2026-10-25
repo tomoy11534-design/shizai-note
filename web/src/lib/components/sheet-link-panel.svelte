@@ -23,7 +23,8 @@
 	}
 
 	$effect(() => {
-		if (app.householdId) void load();
+		if (app.demo) loaded = true;
+		else if (app.householdId) void load();
 	});
 
 	async function issue() {
@@ -86,7 +87,9 @@
 			</div>
 		{/if}
 
-		{#if app.isOwner}
+		{#if app.demo}
+			<p class="note">デモ版では、合言葉の発行はできません。</p>
+		{:else if app.isOwner}
 			<div class="form-actions" style="margin-top:8px">
 				<button type="button" class="btn btn-primary" onclick={issue} disabled={busy}>{link ? '合言葉を作り直す' : '合言葉を発行する'}</button>
 				{#if link}<button type="button" class="btn btn-danger" onclick={remove}>連携をやめる</button>{/if}
