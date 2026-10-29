@@ -5,6 +5,7 @@
 	import { DICT_FIELDS } from '#lib/dictionary.js';
 	import { yen } from '#lib/format.js';
 	import type { Item } from '#lib/types.js';
+	import { guessUsage, USAGES } from '#lib/usage.js';
 	import PublicRefSelect from './public-ref-select.svelte';
 
 	// 資材の登録・編集
@@ -26,6 +27,7 @@
 			supplier: item?.supplier ?? '',
 			public_ref: item?.public_ref ?? '',
 			purpose: item?.purpose ?? '',
+			usage: item?.usage ?? '',
 			memo: item?.memo ?? '',
 			features: item?.features ?? '',
 			how_to_use: item?.how_to_use ?? '',
@@ -46,6 +48,10 @@
 	let addingCategory = $state(false);
 	let newCategory = $state('');
 	let similar = $derived(findSimilarCategory(newCategory, app.categories));
+
+	// 用途区分の候補（決まった区分と、ほかの資材で使っている区分）と、品名から決めたおすすめ
+	let usageOptions = $derived([...new Set([...USAGES, ...app.items.map((i) => i.usage).filter(Boolean)])]);
+	let usageGuess = $derived(guessUsage(form.name, app.categoryName(form.category_id)));
 
 	function pickCategory(e: Event & { currentTarget: HTMLSelectElement }) {
 		if (e.currentTarget.value !== NEW_CATEGORY) {
@@ -90,7 +96,7 @@
 
 	// 変更内容を人が読める形にまとめる（履歴のメモに残す）
 	function describe(before: ReturnType<typeof toForm>, after: ReturnType<typeof toForm>) {
-		const labels: Record<string, string> = { name: '資材名', spec: '規格', product_code: '品名コード', category_id: 'カテゴリ', unit: '単位', stock: '在庫', price: '単価', reorder_level: '発注の目安', expiry: '使用期限', supplier: '購入先', public_ref: '比較データ', purpose: '用途', memo: 'メモ', ...Object.fromEntries(DICT_FIELDS.map((f) => [f.key, f.label])) };
+		const labels: Record<string, string> = { name: '資材名', spec: '規格', product_code: '品名コード', category_id: 'カテゴリ', unit: '単位', stock: '在庫', price: '単価', reorder_level: '発注の目安', expiry: '使用期限', supplier: '購入先', public_ref: '比較データ', purpose: '用途', usage: '用途区分', memo: 'メモ', ...Object.fromEntries(DICT_FIELDS.map((f) => [f.key, f.label])) };
 		// 長い文章の欄は「〜を変更」とだけ残す
 		const longText = ['memo', 'purpose', 'public_ref', ...DICT_FIELDS.map((f) => f.key)];
 		const show = (k: string, v: unknown) => (k === 'category_id' ? app.categoryName(String(v)) : v === '' ? '（なし）' : String(v));
@@ -169,6 +175,13 @@
 	<label class="field half"><span>使用期限</span><input type="date" bind:value={form.expiry} /></label>
 	<label class="field half"><span>購入先</span><input bind:value={form.supplier} list="supplier-list" maxlength="100" placeholder="例：JA" /></label>
 	<label class="field half"><span>比べる全国データ</span><PublicRefSelect bind:value={form.public_ref} withInherit /></label>
+	<div class="field full">
+		<label for="usage"><span>用途区分 <small>用途別の集計に使います</small></span></label>
+		<div class="row-form">
+			<input id="usage" bind:value={form.usage} list="usage-list" maxlength="30" placeholder="例：病害虫防除" />
+			{#if usageGuess && usageGuess !== form.usage}<button type="button" class="btn" onclick={() => (form.usage = usageGuess)}>「{usageGuess}」にする</button>{/if}
+		</div>
+	</div>
 	<label class="field full"><span>用途 <small>何のために使うか</small></span><textarea bind:value={form.purpose} rows="2" maxlength="1000" placeholder="例：トマトの元肥。10aあたり4袋"></textarea></label>
 	<p class="form-section full"><b>資材の辞書</b>　特徴や使い方を書いておくと、説明書タブで一覧・検索できます</p>
 	{#each DICT_FIELDS as f (f.key)}
@@ -188,5 +201,6 @@
 	</div>
 	{#if !id}<p class="note full">登録したときの在庫は、購入金額や価格の計算には入りません。価格の履歴は「入庫」や「過去の購入」で記録します。</p>{/if}
 	<datalist id="unit-list">{#each UNITS as u (u)}<option value={u}></option>{/each}</datalist>
+	<datalist id="usage-list">{#each usageOptions as u (u)}<option value={u}></option>{/each}</datalist>
 	<datalist id="supplier-list">{#each app.suppliers as s (s)}<option value={s}></option>{/each}</datalist>
 </form>

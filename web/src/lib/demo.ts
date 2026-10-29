@@ -2,6 +2,7 @@
 // データはブラウザの中だけに置き、データベースの関数（RPC）と同じ動きをここで再現する。何も保存しない
 import { todayJst } from './calc.js';
 import type { Category, Household, Item, Member, MutationResult, StockEvent } from './types.js';
+import { guessUsage } from './usage.js';
 
 export const DEMO_HOUSEHOLD = 'demo-household';
 export const DEMO_USER = 'demo-owner';
@@ -218,6 +219,7 @@ export function demoData(now = new Date()): DemoData {
 			expiry: s.expiryDays ? addDaysTo(today, s.expiryDays) : null,
 			supplier: s.supplier,
 			purpose: s.purpose ?? '',
+			usage: guessUsage(s.name, s.cat),
 			memo: '',
 			features: s.features ?? '',
 			how_to_use: s.how ?? '',
@@ -306,6 +308,7 @@ export function demoRpc(db: DemoDb, name: string, args: Args): MutationResult {
 				expiry: p.expiry || null,
 				supplier: str(p.supplier),
 				purpose: str(p.purpose),
+				usage: str(p.usage).trim(),
 				memo: str(p.memo),
 				features: str(p.features),
 				how_to_use: str(p.how_to_use),

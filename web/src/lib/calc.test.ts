@@ -44,6 +44,7 @@ const item = (p: Partial<Item> = {}): Item => ({
 	expiry: null,
 	supplier: '',
 	purpose: '',
+	usage: '',
 	memo: '',
 	features: '',
 	how_to_use: '',

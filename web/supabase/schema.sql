@@ -61,6 +61,8 @@ create table public.items (
 	expiry date,
 	supplier text not null default '' check (char_length(supplier) <= 100),
 	purpose text not null default '' check (char_length(purpose) <= 1000),
+	-- 用途区分（病害虫防除・土づくり・施肥など。用途別の集計に使う）
+	usage text not null default '' check (char_length(usage) <= 30),
 	memo text not null default '' check (char_length(memo) <= 1000),
 	-- 資材の辞書（特徴・使い方・注意点・対象の作物）
 	features text not null default '' check (char_length(features) <= 1000),
@@ -313,11 +315,11 @@ begin
 
 	if p ->> 'id' is null or p ->> 'id' = '' then
 		insert into public.items (household_id, name, spec, product_code, category_id, unit, stock, price, reorder_level, expiry,
-			supplier, purpose, memo, features, how_to_use, cautions, crops, public_ref, updated_by)
+			supplier, purpose, usage, memo, features, how_to_use, cautions, crops, public_ref, updated_by)
 		values (p_household, trim(p ->> 'name'), trim(coalesce(p ->> 'spec', '')), trim(coalesce(p ->> 'product_code', '')), (p ->> 'category_id')::uuid, coalesce(p ->> 'unit', ''),
 			coalesce((p ->> 'stock')::numeric, 0), coalesce((p ->> 'price')::numeric, 0),
 			nullif(p ->> 'reorder_level', '')::numeric, nullif(p ->> 'expiry', '')::date,
-			coalesce(p ->> 'supplier', ''), coalesce(p ->> 'purpose', ''), coalesce(p ->> 'memo', ''),
+			coalesce(p ->> 'supplier', ''), coalesce(p ->> 'purpose', ''), trim(coalesce(p ->> 'usage', '')), coalesce(p ->> 'memo', ''),
 			coalesce(p ->> 'features', ''), coalesce(p ->> 'how_to_use', ''), coalesce(p ->> 'cautions', ''),
 			coalesce(p ->> 'crops', ''), coalesce(p ->> 'public_ref', ''), auth.uid())
 		returning * into it;
@@ -345,6 +347,8 @@ begin
 		expiry = nullif(p ->> 'expiry', '')::date,
 		supplier = coalesce(p ->> 'supplier', ''),
 		purpose = coalesce(p ->> 'purpose', ''),
+		-- 用途区分の欄がない古い画面から保存されたときは、今の内容を残す
+		usage = trim(coalesce(p ->> 'usage', cur.usage)),
 		memo = coalesce(p ->> 'memo', ''),
 		-- 辞書の欄がない古い画面から保存されたときは、今の内容を残す
 		features = coalesce(p ->> 'features', cur.features),

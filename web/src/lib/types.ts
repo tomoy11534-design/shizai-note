@@ -47,6 +47,8 @@ export interface Item {
 	expiry: string | null;
 	supplier: string;
 	purpose: string;
+	// 用途区分（病害虫防除・土づくり・施肥など）
+	usage: string;
 	memo: string;
 	features: string;
 	how_to_use: string;

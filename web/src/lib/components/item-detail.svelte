@@ -56,6 +56,7 @@
 		<button type="button" class="btn" onclick={() => (app.modal = { kind: 'item', id })}>編集</button>
 	</div>
 
+	{#if item.usage}<p class="purpose"><span class="purpose-label">用途区分</span>{item.usage}</p>{/if}
 	<p class="purpose" class:empty-purpose={!item.purpose}><span class="purpose-label">用途</span>{item.purpose || '未入力（「編集」から入力できます）'}</p>
 	<DictionaryView {item} />
 

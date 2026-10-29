@@ -41,6 +41,9 @@ describe('お買上げ明細の読み取り', () => {
 		expect(guessCategory('ベストガード粒')).toBe('農薬');
 		expect(guessCategory('肥後培土(袋物)')).toBe('肥料');
 		expect(guessCategory('灯油(配達)')).toBe('燃料');
+		expect(guessCategory('グラバーメロン 100粒')).toBe('種苗');
+		expect(guessCategory('アドマイヤー1粒')).toBe('農薬');
+		expect(guessCategory('過石(粒) 樹脂袋')).toBe('肥料');
 		expect(guessCategory('ふしぎな品物')).toBeNull();
 	});
 });

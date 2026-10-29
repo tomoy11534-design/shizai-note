@@ -12,6 +12,7 @@
 	let search = $state('');
 	let category = $state('');
 	let supplier = $state('');
+	let usage = $state('');
 	let status = $state('');
 
 	// 棚卸しの画面を開いているか。途中の下書きがあれば、件数を知らせる
@@ -23,14 +24,17 @@
 	});
 
 	const thisYear = new Date().getFullYear();
+	const NO_USAGE = '__none__';
 
 	let list = $derived(
 		app.sortItems(
 			app.items.filter((item) => {
 				if (category && item.category_id !== category) return false;
 				if (supplier && item.supplier !== supplier) return false;
+				// 「未設定」は用途区分が空の資材
+				if (usage && (item.usage || '') !== (usage === NO_USAGE ? '' : usage)) return false;
 				const q = search.trim().toLowerCase();
-				if (q && !`${item.name} ${item.spec} ${item.product_code} ${item.memo} ${item.supplier} ${item.purpose} ${dictionaryText(item)}`.toLowerCase().includes(q)) return false;
+				if (q && !`${item.name} ${item.spec} ${item.product_code} ${item.memo} ${item.supplier} ${item.usage ?? ''} ${item.purpose} ${dictionaryText(item)}`.toLowerCase().includes(q)) return false;
 				if (status) {
 					const keys = app.tagsOf(item).map((t) => t.key);
 					if (status === 'attention' ? !keys.length : !keys.includes(status as never)) return false;
@@ -51,10 +55,10 @@
 	function exportCsv() {
 		downloadCsv(
 			[
-				['資材名', '規格', '品名コード', 'カテゴリ', '在庫数', '単位', '単価', '合計金額', '発注の目安', '使用期限', '購入先', '用途', 'メモ', '前年比(%)', '更新日時', '更新者'],
+				['資材名', '規格', '品名コード', 'カテゴリ', '在庫数', '単位', '単価', '合計金額', '発注の目安', '使用期限', '購入先', '用途区分', '用途', 'メモ', '前年比(%)', '更新日時', '更新者'],
 				...app.sortItems(app.items).map((i) => [
 					i.name, i.spec, i.product_code, app.categoryName(i.category_id), i.stock, i.unit, i.price, Math.round(i.stock * i.price), i.reorder_level, i.expiry,
-					i.supplier, i.purpose, i.memo, pctPlain(app.compare(i, thisYear).yoy), i.updated_at, app.memberName(i.updated_by)
+					i.supplier, i.usage, i.purpose, i.memo, pctPlain(app.compare(i, thisYear).yoy), i.updated_at, app.memberName(i.updated_by)
 				])
 			],
 			`shizai-zaiko-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`
@@ -121,6 +125,11 @@
 			<option value="">すべての購入先</option>
 			{#each app.suppliers as s (s)}<option value={s}>{s}</option>{/each}
 		</select>
+		<select bind:value={usage} aria-label="用途区分">
+			<option value="">すべての用途区分</option>
+			{#each app.usages as u (u)}<option value={u}>{u}</option>{/each}
+			<option value={NO_USAGE}>用途区分が未設定</option>
+		</select>
 		<select bind:value={status} aria-label="状態">
 			<option value="">すべての状態</option>
 			<option value="attention">注意が必要なもの</option>
@@ -140,6 +149,7 @@
 				<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>{#if item.spec}<span class="spec">{item.spec}</span>{/if}
 				<div class="item-tags">
 					<span class="badge">{app.categoryName(item.category_id)}</span>
+					{#if item.usage}<span class="badge" title="用途区分">{item.usage}</span>{/if}
 					{#each tags as t, i (i)}<span class="badge badge-{t.level}">{t.text}</span>{/each}
 					{#if item.supplier}<span class="chg-sub">{item.supplier}</span>{/if}
 					{#if files}<span class="badge" title="取扱説明書">📎 {files}</span>{/if}

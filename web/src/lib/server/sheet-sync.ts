@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { guessCategory, parseStatement, type StatementRow } from './statement.js';
+import { guessCrop, guessUsage } from '../usage.js';
 import { adminClient } from './supabase-admin.js';
 
 type Db = SupabaseClient;
@@ -26,11 +27,13 @@ async function fetchAll<T>(query: (from: number, to: number) => PromiseLike<{ da
 	}
 }
 
+const ITEM_COLUMNS = 'id, name, spec, category_id, usage, product_code, price, supplier, last_purchase_date';
 interface ItemRow {
 	id: string;
 	name: string;
 	spec: string;
 	category_id: string;
+	usage: string;
 	product_code: string;
 	price: number;
 	supplier: string;
@@ -85,7 +88,7 @@ export async function importStatement(householdId: string, tables: SheetTable[])
 	if (!fresh.length) return finish(db, householdId, result);
 
 	const items = await fetchAll<ItemRow>((a, b) =>
-		db.from('items').select('id, name, spec, category_id, product_code, price, supplier, last_purchase_date').eq('household_id', householdId).range(a, b)
+		db.from('items').select(ITEM_COLUMNS).eq('household_id', householdId).range(a, b)
 	);
 	const { data: cats, error: catError } = await db.from('categories').select('id, name').eq('household_id', householdId).order('sort_order');
 	if (catError) throw new Error(catError.message);
@@ -94,24 +97,30 @@ export async function importStatement(householdId: string, tables: SheetTable[])
 	const byKey = new Map(items.map((i) => [itemKey(i.name, i.spec), i]));
 	const byName = new Map(items.map((i) => [i.name, i]));
 
-	// 新しい資材を登録する。カテゴリは、同じ品名の資材があればそれに合わせ、なければ品名から決める
+	// 新しい資材を登録する。カテゴリと用途区分は、同じ品名の資材があればそれに合わせ、なければ品名から決める
 	const purchases = fresh.filter((r) => r.qty > 0);
 	const missing = new Map<string, StatementRow>();
 	for (const r of purchases) if (!byKey.has(itemKey(r.name, r.spec))) missing.set(itemKey(r.name, r.spec), r);
 	const fallback = catId.get('その他') ?? cats?.[0]?.id;
-	const newRows = [...missing.values()].map((r) => ({
-		household_id: householdId,
-		name: r.name.slice(0, 100),
-		spec: r.spec.slice(0, 100),
-		product_code: r.code.slice(0, 30),
-		category_id: byName.get(r.name)?.category_id ?? catId.get(guessCategory(r.name) ?? '') ?? fallback,
-		unit: '',
-		stock: 0,
-		price: r.unitPrice,
-		supplier: r.supplier
-	}));
+	const newRows = [...missing.values()].map((r) => {
+		const same = byName.get(r.name);
+		const categoryId = same?.category_id ?? catId.get(guessCategory(r.name) ?? '') ?? fallback;
+		return {
+			household_id: householdId,
+			name: r.name.slice(0, 100),
+			spec: r.spec.slice(0, 100),
+			product_code: r.code.slice(0, 30),
+			category_id: categoryId,
+			usage: same?.usage || guessUsage(r.name, catName.get(categoryId ?? '') ?? ''),
+			crops: guessCrop(r.name),
+			unit: '',
+			stock: 0,
+			price: r.unitPrice,
+			supplier: r.supplier
+		};
+	});
 	for (let i = 0; i < newRows.length; i += 100) {
-		const { data, error } = await db.from('items').insert(newRows.slice(i, i + 100)).select('id, name, spec, category_id, product_code, price, supplier, last_purchase_date');
+		const { data, error } = await db.from('items').insert(newRows.slice(i, i + 100)).select(ITEM_COLUMNS);
 		if (error) throw new Error(`資材を登録できませんでした：${error.message}`);
 		for (const it of data as ItemRow[]) byKey.set(itemKey(it.name, it.spec), it);
 		await insertEvents(
@@ -243,10 +252,10 @@ export async function buildExport(householdId: string) {
 	items.sort((a, b) => order(a.category_id) - order(b.category_id) || String(a.name).localeCompare(String(b.name), 'ja'));
 
 	const stock = [
-		['資材名', '規格', '品名コード', 'カテゴリ', '在庫数', '単位', '単価', '在庫金額', '購入先', '最後の購入日', '使用期限', '用途', '対象の作物', 'メモ', '更新日時'],
+		['資材名', '規格', '品名コード', 'カテゴリ', '在庫数', '単位', '単価', '在庫金額', '購入先', '最後の購入日', '使用期限', '用途区分', '用途', '対象の作物', 'メモ', '更新日時'],
 		...items.map((i) => [
 			i.name, i.spec, i.product_code, cat.get(i.category_id)?.name ?? '', Number(i.stock), i.unit, Number(i.price),
-			Math.round(Number(i.stock) * Number(i.price)), i.supplier, i.last_purchase_date ?? '', i.expiry ?? '', i.purpose, i.crops, i.memo,
+			Math.round(Number(i.stock) * Number(i.price)), i.supplier, i.last_purchase_date ?? '', i.expiry ?? '', i.usage, i.purpose, i.crops, i.memo,
 			String(i.updated_at).slice(0, 16).replace('T', ' ')
 		])
 	];

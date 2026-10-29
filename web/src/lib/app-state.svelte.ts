@@ -4,6 +4,7 @@ import { compare, itemTags, publicRefOf, purchasesByItem, todayJst, yearStatsOf,
 import { DEMO_USER, demoData, demoRpc } from './demo.js';
 import { errorMessage } from './format.js';
 import { MANUAL_BUCKET, supabase } from './supabase.js';
+import { USAGES } from './usage.js';
 import type {
 	AppStatus,
 	Category,
@@ -121,6 +122,8 @@ class AppState {
 		tab: 'stock' as Tab,
 		priceYear: new Date().getFullYear(),
 		summaryYear: new Date().getFullYear(),
+		// 購入金額を何ごとに分けて集計するか
+		summaryBy: 'category' as 'category' | 'usage' | 'crop',
 		chartMode: 'yen' as 'yen' | 'index',
 		chartSel: [] as { id: string; slot: number }[],
 		chartTouched: false,
@@ -150,6 +153,12 @@ class AppState {
 			a.localeCompare(b, 'ja')
 		)
 	);
+	// 資材で使っている用途区分（決まった区分の順に並べ、ほかの区分はあとに名前順）
+	usages = $derived.by(() => {
+		const used = new Set(this.items.map((i) => i.usage).filter(Boolean));
+		const known: string[] = USAGES.filter((u) => used.has(u));
+		return [...known, ...[...used].filter((u) => !known.includes(u)).sort((a, b) => a.localeCompare(b, 'ja'))];
+	});
 	purchaseYears = $derived(
 		[...new Set([new Date().getFullYear(), ...[...this.purchases.values()].flat().map((p) => p.year)])].sort((a, b) => b - a)
 	);
