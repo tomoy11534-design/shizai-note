@@ -47,7 +47,10 @@
 <div class="panel">
 	<h2>入出庫・価格の記録</h2>
 	<div class="filters history-filters">
-		<input type="search" bind:value={search} oninput={() => (limit = 200)} placeholder="資材名・購入先・メモ・明細No.などで検索" aria-label="検索" />
+		<div class="search-box">
+			<input type="search" bind:value={search} oninput={() => (limit = 200)} placeholder="資材名・購入先・メモ・明細No.などで検索" aria-label="検索" />
+			{#if search}<button type="button" class="search-clear" aria-label="検索をクリア" onclick={() => { search = ''; limit = 200; }}>✕</button>{/if}
+		</div>
 		<select bind:value={itemId} onchange={() => (limit = 200)} aria-label="資材">
 			<option value="">すべての資材</option>
 			{#each names as [id, name] (id)}<option value={id}>{name}{app.findItem(id) ? '' : '（削除済み）'}</option>{/each}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { app, readJson } from '#lib/app-state.svelte.js';
-	import { costChange, publicChange } from '#lib/calc.js';
+	import { costChange, publicChange, recentItemIds, todayJst } from '#lib/calc.js';
 	import { dictionaryText } from '#lib/dictionary.js';
 	import { draftKey, draftRows, type StocktakeDraft } from '#lib/stocktake.js';
 	import { chgText, downloadCsv, fmt, pctPlain, yen } from '#lib/format.js';
@@ -50,7 +50,18 @@
 	);
 	let cost = $derived(costChange(app.items, app.stats, thisYear));
 	let total = $derived(app.pubMap.get('idx:農業生産資材総合') ?? null);
-	let attention = $derived(app.sortItems(app.items).map((item) => ({ item, tags: app.tagsOf(item) })).filter((x) => x.tags.length));
+	// 在庫切れは、最近使っている資材だけ知らせる（一覧の表示や絞り込みはそのまま）
+	let recentIds = $derived(recentItemIds(app.events, todayJst()));
+	let attention = $derived(
+		app.sortItems(app.items)
+			.map((item) => ({ item, tags: app.tagsOf(item).filter((t) => t.key !== 'out' || recentIds.has(item.id)) }))
+			.filter((x) => x.tags.length)
+			// 在庫切れ・期限切れなど、急ぐものを先に出す
+			.sort((a, b) => Number(b.tags.some((t) => t.level === 'danger')) - Number(a.tags.some((t) => t.level === 'danger')))
+	);
+	// 在庫一覧へすぐ行けるよう、最初は上から数件だけ出す
+	const ATTENTION_LIMIT = 5;
+	let attentionOpen = $state(false);
 
 	function exportCsv() {
 		downloadCsv(
@@ -95,7 +106,7 @@
 	<div class="panel attention">
 		<h2>注意が必要な資材（{attention.length}件）</h2>
 		<ul>
-			{#each attention.slice(0, 30) as { item, tags } (item.id)}
+			{#each attentionOpen ? attention : attention.slice(0, ATTENTION_LIMIT) as { item, tags } (item.id)}
 				<li>
 					<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>
 					{#each tags as t, i (i)}<span class="badge badge-{t.level}">{t.text}</span>{/each}
@@ -103,7 +114,11 @@
 				</li>
 			{/each}
 		</ul>
-		{#if attention.length > 30}<p class="note">ほか {attention.length - 30} 件</p>{/if}
+		{#if attention.length > ATTENTION_LIMIT}
+			<div class="list-foot">
+				<button type="button" class="btn" onclick={() => (attentionOpen = !attentionOpen)}>{attentionOpen ? '折りたたむ' : `もっと見る（残り ${attention.length - ATTENTION_LIMIT} 件）`}</button>
+			</div>
+		{/if}
 	</div>
 {/if}
 

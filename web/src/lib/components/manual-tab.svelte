@@ -35,7 +35,7 @@
 	});
 </script>
 
-<div class="tiles">
+<div class="tiles compact">
 	<Tile label="登録した説明書" value="{app.manuals.length} 件" />
 	<Tile label="説明書がある資材" value="{withManual} 品目" sub="全 {app.items.length} 品目中" />
 	<Tile label="説明書がない資材" value="{app.items.length - withManual} 品目" />
@@ -73,12 +73,14 @@
 					<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'item', id: item.id })}>辞書を編集</button>
 				</div>
 			</div>
-			<p class="purpose" class:empty-purpose={!item.purpose}><span class="purpose-label">用途</span>{item.purpose || '未入力'}</p>
-			<DictionaryView {item} emptyText="辞書は未入力です" />
+			{#if item.purpose || hasDictionary(item)}
+				{#if item.purpose}<p class="purpose"><span class="purpose-label">用途</span>{item.purpose}</p>{/if}
+				{#if hasDictionary(item)}<DictionaryView {item} />{/if}
+			{:else}
+				<p class="purpose empty-purpose">用途・辞書は未入力です</p>
+			{/if}
 			{#if files.length}
 				<div class="files">{#each files as m (m.id)}<FileCard manual={m} />{/each}</div>
-			{:else}
-				<p class="note">説明書はまだありません。</p>
 			{/if}
 		</div>
 	{:else}

@@ -205,6 +205,16 @@ export function itemTags(item: Item, today: string, settings: Pick<Household, 'a
 	return tags;
 }
 
+// 直近1年に購入か使用の記録がある資材（登録や棚卸しだけでは「使っている」とみなさない）
+export function recentItemIds(events: StockEvent[], today: string): Set<string> {
+	const since = addDays(today, -365);
+	const ids = new Set<string>();
+	for (const e of events) {
+		if (e.item_id && !e.cancelled && e.event_date >= since && [...PURCHASE_TYPES, '出庫'].includes(e.type)) ids.add(e.item_id);
+	}
+	return ids;
+}
+
 // 日本時間の今日（yyyy-mm-dd）
 export function todayJst(now = new Date()): string {
 	return new Date(now.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);

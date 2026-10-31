@@ -311,16 +311,19 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 /* スマホでは画面下のタブに隠れないよう、その上に止める */
 .stocktake-footer { position: sticky; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom)); z-index: 5; background: var(--card); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
 
-.stepper { display: inline-flex; align-items: center; gap: 4px; }
+/* スマホでは手袋でも押せるよう、ボタンを大きくして左右に離す */
+.stepper { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
 .stepper button {
-  width: 40px;
-  height: 40px;
+  width: 56px;
+  height: 56px;
+  flex: none;
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
-  font-size: 1.2rem;
+  font-size: 1.6rem;
   cursor: pointer;
+  touch-action: manipulation;
 }
 .stepper .stock { min-width: 5em; text-align: center; font-weight: bold; font-variant-numeric: tabular-nums; }
 
@@ -484,8 +487,31 @@ button.file-thumb { border: none; width: 100%; cursor: pointer; padding: 0; font
 .filters.three input[type="search"] { grid-column: 1 / -1; }
 /* スマホでは資材名が長いので、資材の選択だけ1段使う */
 .history-filters select:first-of-type { grid-column: 1 / -1; }
+/* 検索欄の右端のクリアボタン（ブラウザ標準の✕は隠して揃える） */
+.search-box { position: relative; grid-column: 1 / -1; }
+.search-box input { width: 100%; padding-right: 44px; }
+.search-box input::-webkit-search-cancel-button { display: none; }
+.search-clear { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; border: none; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; }
+/* スマホでは集計の箱を小さくして、一覧や検索欄をすぐ見えるようにする */
+@media (max-width: 767px) {
+  .tiles.compact { gap: 4px 8px; }
+  .tiles.compact .tile { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 4px 8px; }
+  .tiles.compact .tile-value { font-size: 0.95rem; white-space: nowrap; }
+  .tiles.compact .tile-sub { display: none; }
+  /* 片手でも押しやすいよう広げ、削除は押し間違えないよう別の段に離す */
+  .manual-item .item-buttons { gap: 8px; }
+  .manual-item .item-buttons .btn { padding: 8px 14px; min-height: 44px; font-size: 0.9rem; }
+  .file-actions { flex-wrap: wrap; gap: 8px; }
+  .file-actions .btn { min-height: 44px; font-size: 0.85rem; }
+  .file-actions .btn-danger { flex-basis: 100%; margin-top: 8px; }
+}
+/* 年の切り替えを見つけやすくする */
+.year-select select { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-dark); font-weight: bold; }
 
 @media (min-width: 768px) {
+  .stepper { display: inline-flex; width: auto; justify-content: flex-start; gap: 4px; }
+  .stepper button { width: 40px; height: 40px; font-size: 1.2rem; }
+  .search-box { grid-column: auto; }
   .filters.three { grid-template-columns: 2fr 1fr 1fr; }
   .filters.three input[type="search"] { grid-column: auto; }
   .history-filters select:first-of-type { grid-column: auto; }
