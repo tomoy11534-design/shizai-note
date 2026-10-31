@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compare, costChange, itemTags, publicChange, purchasesByItem, yearStatsOf } from './calc.js';
+import { compare, costChange, itemTags, publicChange, purchasesByItem, recentItemIds, yearStatsOf } from './calc.js';
 import type { Item, PublicSeries, StockEvent } from './types.js';
 
 // テスト用の購入記録を作る
@@ -180,5 +180,23 @@ describe('注意表示', () => {
 	it('値上がり注意と全国より高め', () => {
 		const tags = itemTags(item(), '2026-10-14', settings, { hasData: true, series: null, yoy: 12, gap: 6 });
 		expect(tags.map((t) => t.text)).toEqual(['値上がり注意', '全国より高め']);
+	});
+
+	it('直近1年に購入か使用の記録がある資材だけを選ぶ', () => {
+		const today = '2026-11-01';
+		const ids = recentItemIds(
+			[
+				ev({ item_id: 'bought', type: '入庫', event_date: '2025-11-01' }),
+				ev({ item_id: 'past', type: '過去の購入', event_date: '2026-03-01' }),
+				ev({ item_id: 'used', type: '出庫', event_date: '2026-10-01' }),
+				ev({ item_id: 'old', type: '入庫', event_date: '2025-10-31' }),
+				ev({ item_id: 'cancelled', type: '入庫', event_date: '2026-10-01', cancelled: true }),
+				ev({ item_id: 'registered', type: '登録', event_date: '2026-10-01' }),
+				ev({ item_id: 'counted', type: '棚卸し', event_date: '2026-10-01' }),
+				ev({ item_id: null, type: '入庫', event_date: '2026-10-01' })
+			],
+			today
+		);
+		expect([...ids].sort()).toEqual(['bought', 'past', 'used']);
 	});
 });

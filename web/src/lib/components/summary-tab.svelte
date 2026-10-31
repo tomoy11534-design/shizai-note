@@ -10,6 +10,8 @@
 
 	let year = $derived(app.ui.summaryYear);
 	let by = $derived(app.ui.summaryBy);
+	// 記録がない年を開いたときに案内する、ひとつ前の記録がある年
+	let earlierYear = $derived(app.purchaseYears.find((y) => y < year));
 
 	const BY_LABELS = { category: 'カテゴリ', usage: '用途区分', crop: '作物' } as const;
 	const NO_USAGE = '未設定';
@@ -84,7 +86,7 @@
 				{#each Object.entries(BY_LABELS) as [k, label] (k)}<option value={k}>{label}</option>{/each}
 			</select>
 		</label>
-		<label class="inline">年
+		<label class="inline year-select">年
 			<select bind:value={app.ui.summaryYear}>
 				{#each app.purchaseYears as y (y)}<option value={y}>{y}年</option>{/each}
 			</select>
@@ -95,6 +97,9 @@
 		{#if by === 'usage'}用途区分は資材の今の設定で分けます（資材の「編集」で変えられます）。{/if}
 		{#if by === 'crop'}資材の「対象の作物」で分けます。作物が複数ある資材は、金額を等分します。{/if}
 	</p>
+	{#if !amountRows.length && earlierYear}
+		<p><button type="button" class="btn" onclick={() => (app.ui.summaryYear = earlierYear!)}>{earlierYear}年の集計を見る</button></p>
+	{/if}
 	<div class="table-scroll">
 		<table class="data-table compact">
 			<thead>
