@@ -3,6 +3,7 @@
 	import { PURCHASE_TYPES } from '#lib/calc.js';
 	import HistoryRow from './history-row.svelte';
 
+	let search = $state('');
 	let itemId = $state('');
 	let period = $state('all');
 	let type = $state('');
@@ -22,6 +23,7 @@
 		const now = new Date();
 		const thisMonth = ym(now);
 		const lastMonth = ym(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+		const q = search.trim().toLowerCase();
 		return app.events
 			.filter((e) => {
 				if (itemId && e.item_id !== itemId) return false;
@@ -31,6 +33,11 @@
 				if (period === 'lastMonth' && d.slice(0, 7) !== lastMonth) return false;
 				if (period === 'thisYear' && d.slice(0, 4) !== String(now.getFullYear())) return false;
 				if (period === 'lastYear' && d.slice(0, 4) !== String(now.getFullYear() - 1)) return false;
+				if (q) {
+					// 規格と品名コードは記録に残らないので、今の資材から探す
+					const item = e.item_id ? app.findItem(e.item_id) : undefined;
+					if (!`${e.item_name} ${item?.spec ?? ''} ${item?.product_code ?? ''} ${e.type} ${e.supplier ?? ''} ${e.memo ?? ''} ${d} ${app.memberName(e.user_id)}`.toLowerCase().includes(q)) return false;
+				}
 				return true;
 			})
 			.sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -39,7 +46,8 @@
 
 <div class="panel">
 	<h2>入出庫・価格の記録</h2>
-	<div class="filters three">
+	<div class="filters">
+		<input type="search" bind:value={search} oninput={() => (limit = 200)} placeholder="資材名・購入先・メモ・明細No.などで検索" aria-label="検索" />
 		<select bind:value={itemId} onchange={() => (limit = 200)} aria-label="資材">
 			<option value="">すべての資材</option>
 			{#each names as [id, name] (id)}<option value={id}>{name}{app.findItem(id) ? '' : '（削除済み）'}</option>{/each}
