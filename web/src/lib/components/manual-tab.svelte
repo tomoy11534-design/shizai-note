@@ -62,23 +62,21 @@
 
 	{#each list as item (item.id)}
 		{@const files = app.manualsOf(item.id)}
-		<div class="manual-item">
+		{@const blank = !item.purpose && !hasDictionary(item)}
+		<div class="manual-item" class:is-blank={blank && !files.length}>
 			<div class="manual-head">
 				<div>
 					<button type="button" class="item-name" onclick={() => (app.modal = { kind: 'detail', id: item.id })}>{item.name}</button>{#if item.spec}<span class="spec">{item.spec}</span>{/if}
 					<span class="badge">{app.categoryName(item.category_id)}</span>
+					{#if blank}<span class="chg-sub">用途・辞書 未入力</span>{/if}
 				</div>
 				<div class="item-buttons">
 					<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'upload', id: item.id, back: false })}>＋ 説明書</button>
 					<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'item', id: item.id })}>辞書を編集</button>
 				</div>
 			</div>
-			{#if item.purpose || hasDictionary(item)}
-				{#if item.purpose}<p class="purpose"><span class="purpose-label">用途</span>{item.purpose}</p>{/if}
-				{#if hasDictionary(item)}<DictionaryView {item} />{/if}
-			{:else}
-				<p class="purpose empty-purpose">用途・辞書は未入力です</p>
-			{/if}
+			{#if item.purpose}<p class="purpose"><span class="purpose-label">用途</span>{item.purpose}</p>{/if}
+			{#if hasDictionary(item)}<DictionaryView {item} />{/if}
 			{#if files.length}
 				<div class="files">{#each files as m (m.id)}<FileCard manual={m} />{/each}</div>
 			{/if}
