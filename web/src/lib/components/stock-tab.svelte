@@ -14,6 +14,9 @@
 	let supplier = $state('');
 	let usage = $state('');
 	let status = $state('');
+	// スマホでは絞り込みをふだん閉じておく（PCは常に表示）
+	let filtersOpen = $state(false);
+	let activeFilters = $derived([category, supplier, usage, status].filter(Boolean).length);
 
 	// 棚卸しの画面を開いているか。途中の下書きがあれば、件数を知らせる
 	let stocktaking = $state(false);
@@ -130,8 +133,9 @@
 			<button type="button" class="btn btn-primary" onclick={() => (app.modal = { kind: 'item', id: null })}>＋ 資材を登録</button>
 		</div>
 	</div>
-	<div class="filters">
+	<div class="filters stock-filters" class:open={filtersOpen}>
 		<input type="search" bind:value={search} placeholder="資材名・用途・メモ・購入先で検索" aria-label="検索" />
+		<button type="button" class="btn filter-toggle" class:btn-primary={activeFilters > 0} aria-expanded={filtersOpen} onclick={() => (filtersOpen = !filtersOpen)}>絞り込み{activeFilters ? `（${activeFilters}）` : ''} {filtersOpen ? '▲' : '▼'}</button>
 		<select bind:value={category} aria-label="カテゴリ">
 			<option value="">すべてのカテゴリ</option>
 			{#each app.categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
