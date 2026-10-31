@@ -482,9 +482,12 @@ button.modal-backdrop { border: none; padding: 0; cursor: default; width: 100%; 
 .chart-box.tall { height: 320px; }
 button.file-thumb { border: none; width: 100%; cursor: pointer; padding: 0; font: inherit; }
 .filters.three input[type="search"] { grid-column: 1 / -1; }
+/* スマホでは資材名が長いので、資材の選択だけ1段使う */
+.history-filters select:first-of-type { grid-column: 1 / -1; }
 
 @media (min-width: 768px) {
   .filters.three { grid-template-columns: 2fr 1fr 1fr; }
   .filters.three input[type="search"] { grid-column: auto; }
+  .history-filters select:first-of-type { grid-column: auto; }
   .chart-box.tall { height: 380px; }
 }
