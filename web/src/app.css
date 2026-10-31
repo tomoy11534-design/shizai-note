@@ -312,11 +312,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
 /* スマホでは画面下のタブに隠れないよう、その上に止める */
 .stocktake-footer { position: sticky; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom)); z-index: 5; background: var(--card); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
 
-/* スマホでは手袋でも押せるよう、ボタンを大きくして左右に離す */
-.stepper { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
+/* スマホでは入庫などのボタンと同じ段に並べ、幅が足りないときだけ2段にする */
+.stepper { display: flex; flex: 1 1 120px; align-items: center; justify-content: space-between; gap: 4px; }
 .stepper button {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex: none;
   border-radius: 50%;
   border: 1px solid var(--border);
@@ -326,7 +326,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); out
   cursor: pointer;
   touch-action: manipulation;
 }
-.stepper .stock { min-width: 5em; text-align: center; font-weight: bold; font-variant-numeric: tabular-nums; }
+.stepper .stock { min-width: 3em; text-align: center; font-weight: bold; font-variant-numeric: tabular-nums; }
 
 /* ===== 表 ===== */
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -500,10 +500,12 @@ button.file-thumb { border: none; width: 100%; cursor: pointer; padding: 0; font
   .tiles.compact .tile-value { font-size: 0.95rem; white-space: nowrap; }
   .tiles.compact .tile-sub { display: none; }
   /* カードの余白を詰めて、1画面に入る資材を増やす */
-  .item-card { padding: 6px 10px; margin-bottom: 6px; gap: 4px 8px; }
-  /* 入庫・出庫・編集は、どちらの手の親指でも届くよう横幅いっぱいに並べる */
-  .item-actions .item-buttons { width: 100%; gap: 8px; }
-  .item-actions .item-buttons .btn { flex: 1; padding: 4px 8px; min-height: 40px; font-size: 0.9rem; touch-action: manipulation; }
+  .item-card { grid-template-columns: minmax(0, 1fr) auto; padding: 6px 10px; margin-bottom: 6px; gap: 4px 8px; }
+  /* 長い用途やメモでカードがはみ出さないよう折り返す */
+  .item-card > div:first-child .chg-sub { white-space: normal; }
+  /* 入庫・出庫・編集は、残りの幅に均等に広げる */
+  .item-actions .item-buttons { flex: 1 1 140px; gap: 4px; }
+  .item-actions .item-buttons .btn { flex: 1; padding: 4px 2px; min-height: 40px; font-size: 0.85rem; touch-action: manipulation; }
   /* 在庫一覧の絞り込みは、ボタンを押したときだけ開く */
   .stock-filters { display: flex; flex-wrap: wrap; }
   .stock-filters input[type="search"] { flex: 1 1 60%; width: auto; min-width: 0; }
@@ -539,8 +541,9 @@ button.file-thumb { border: none; width: 100%; cursor: pointer; padding: 0; font
 
 @media (min-width: 768px) {
   .filter-toggle { display: none; }
-  .stepper { display: inline-flex; width: auto; justify-content: flex-start; gap: 4px; }
-  .stepper button { width: 40px; height: 40px; font-size: 1.2rem; }
+  .stepper { display: inline-flex; flex: none; justify-content: flex-start; }
+  .stepper button { font-size: 1.2rem; }
+  .stepper .stock { min-width: 5em; }
   .search-box { grid-column: auto; }
   .filters.three { grid-template-columns: 2fr 1fr 1fr; }
   .filters.three input[type="search"] { grid-column: auto; }
