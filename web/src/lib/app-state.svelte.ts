@@ -25,6 +25,7 @@ export type ModalState =
 	| { kind: 'move'; id: string; move: '入庫' | '出庫' }
 	| { kind: 'past'; id: string }
 	| { kind: 'detail'; id: string }
+	| { kind: 'ai-draft'; id: string; copied?: boolean }
 	| { kind: 'upload'; id: string; back: boolean }
 	| { kind: 'rename-category'; id: string }
 	| { kind: 'merge-category'; id: string };

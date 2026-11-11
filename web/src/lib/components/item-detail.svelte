@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { isPesticide, searchLinks } from '#lib/ai-draft.js';
+	import { openAiDraft } from '#lib/components/ai-draft-form.svelte';
 	import { app } from '#lib/app-state.svelte.js';
 	import { latestPublic, PURCHASE_TYPES, publicChange, rate } from '#lib/calc.js';
 	import { priceChart } from '#lib/charts.js';
@@ -59,6 +61,12 @@
 	{#if item.usage}<p class="purpose"><span class="purpose-label">用途区分</span>{item.usage}</p>{/if}
 	<p class="purpose" class:empty-purpose={!item.purpose}><span class="purpose-label">用途</span>{item.purpose || '未入力（「編集」から入力できます）'}</p>
 	<DictionaryView {item} />
+	<div class="form-actions" style="margin:4px 0 10px">
+		<button type="button" class="btn" onclick={() => openAiDraft(id)}>AIに聞いて辞書を作る（無料）</button>
+		{#each searchLinks(item, isPesticide(app.categoryName(item.category_id), item.usage)) as l (l.href)}
+			<a class="btn" style="text-decoration:none" href={l.href} target="_blank" rel="noopener noreferrer">{l.label}</a>
+		{/each}
+	</div>
 
 	<h3>取扱説明書（{files.length}件）</h3>
 	{#if files.length}

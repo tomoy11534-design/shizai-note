@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { app } from '#lib/app-state.svelte.js';
 	import { dictionaryText, hasDictionary } from '#lib/dictionary.js';
+	import { openAiDraft } from './ai-draft-form.svelte';
 	import DictionaryView from './dictionary-view.svelte';
 	import FileCard from './file-card.svelte';
 	import Tile from './tile.svelte';
@@ -72,6 +73,7 @@
 				</div>
 				<div class="item-buttons">
 					<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'upload', id: item.id, back: false })}>＋ 説明書</button>
+					<button type="button" class="btn btn-small" onclick={() => openAiDraft(item.id)}>AIに聞く</button>
 					<button type="button" class="btn btn-small" onclick={() => (app.modal = { kind: 'item', id: item.id })}>辞書を編集</button>
 				</div>
 			</div>

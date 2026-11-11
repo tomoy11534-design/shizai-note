@@ -3,6 +3,7 @@
 	import { app, type Tab } from '#lib/app-state.svelte.js';
 	import HistoryTab from '#lib/components/history-tab.svelte';
 	import HouseholdSetup from '#lib/components/household-setup.svelte';
+	import AiDraftForm from '#lib/components/ai-draft-form.svelte';
 	import ItemDetail from '#lib/components/item-detail.svelte';
 	import ItemForm from '#lib/components/item-form.svelte';
 	import LoginView from '#lib/components/login-view.svelte';
@@ -45,6 +46,8 @@
 				return `過去の購入：${name}`;
 			case 'detail':
 				return name || '資材の詳細';
+			case 'ai-draft':
+				return `AIに聞いて辞書を作る：${name}`;
 			case 'upload':
 				return `説明書を追加：${name}`;
 			case 'rename-category':
@@ -120,6 +123,7 @@
 				{:else if m.kind === 'move'}<MoveForm id={m.id} kind={m.move} />
 				{:else if m.kind === 'past'}<PastForm id={m.id} />
 				{:else if m.kind === 'detail'}<ItemDetail id={m.id} />
+				{:else if m.kind === 'ai-draft'}<AiDraftForm id={m.id} copied={m.copied} />
 				{:else if m.kind === 'upload'}<UploadForm id={m.id} back={m.back} />
 				{:else if m.kind === 'rename-category'}<RenameCategoryForm id={m.id} />
 				{:else if m.kind === 'merge-category'}<MergeCategoryForm id={m.id} />{/if}
