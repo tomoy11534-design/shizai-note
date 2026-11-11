@@ -2,6 +2,7 @@
 	import { app } from '#lib/app-state.svelte.js';
 	import { dictionaryText, hasDictionary } from '#lib/dictionary.js';
 	import { openAiDraft } from './ai-draft-form.svelte';
+	import AiDraftHelp from './ai-draft-help.svelte';
 	import DictionaryView from './dictionary-view.svelte';
 	import FileCard from './file-card.svelte';
 	import Tile from './tile.svelte';
@@ -46,6 +47,7 @@
 <div class="panel">
 	<h2>資材の辞書と説明書</h2>
 	<p class="note">資材ごとに、用途・特徴・使い方・注意点・対象の作物と、取扱説明書（PDF・画像）をまとめて管理します。スマホではカメラで撮った写真もそのまま登録できます。</p>
+	<AiDraftHelp />
 	<div class="filters three">
 		<input type="search" bind:value={search} placeholder="資材名・辞書の内容・説明書の表題で検索" aria-label="検索" />
 		<select bind:value={category} aria-label="カテゴリ">
