@@ -2,7 +2,7 @@
 	import { app } from '#lib/app-state.svelte.js';
 	import { PURCHASE_TYPES } from '#lib/calc.js';
 	import { fmt } from '#lib/format.js';
-	import { splitCrops } from '#lib/usage.js';
+	import { cropShares } from '#lib/usage.js';
 
 	const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 	const colLabel = (m: number) => (m ? `${m}月` : '月不明');
@@ -17,13 +17,13 @@
 	const NO_USAGE = '未設定';
 	const NO_CROP = '作物の指定なし';
 
-	// 購入の金額を、どの行に何割ずつ入れるか（作物が複数ある資材は等分する）
+	// 購入の金額を、どの行に何割ずつ入れるか（作物が複数ある資材は等分か、書いてある棟数の割合で分ける）
 	function groupsOf(categoryName: string, itemId: string): [string, number][] {
 		if (by === 'category') return [[categoryName || 'その他', 1]];
 		const item = itemById.get(itemId);
 		if (by === 'usage') return [[item?.usage || NO_USAGE, 1]];
-		const crops = splitCrops(item?.crops ?? '');
-		return crops.length ? crops.map((c) => [c, 1 / crops.length]) : [[NO_CROP, 1]];
+		const shares = cropShares(item?.crops ?? '');
+		return shares.length ? shares : [[NO_CROP, 1]];
 	}
 	let itemById = $derived(new Map(app.items.map((i) => [i.id, i])));
 
@@ -95,7 +95,7 @@
 	<p class="note">
 		入庫と過去の購入の金額の合計です（円）。登録したときの最初の在庫は含みません。
 		{#if by === 'usage'}用途区分は資材の今の設定で分けます（資材の「編集」で変えられます）。{/if}
-		{#if by === 'crop'}資材の「対象の作物」で分けます。作物が複数ある資材は、金額を等分します。{/if}
+		{#if by === 'crop'}資材の「対象の作物」で分けます。作物が複数ある資材は、金額を等分します。「メロン6棟、キュウリ1棟」のように数を書いた資材は、その割合で分けます。{/if}
 	</p>
 	{#if !amountRows.length && earlierYear}
 		<p><button type="button" class="btn" onclick={() => (app.ui.summaryYear = earlierYear!)}>{earlierYear}年の集計を見る</button></p>

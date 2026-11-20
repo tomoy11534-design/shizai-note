@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guessCrop, guessUsage, splitCrops } from './usage.js';
+import { cropShares, guessCrop, guessUsage, splitCrops } from './usage.js';
 
 describe('用途区分', () => {
 	it('品名で決まるものは、カテゴリより品名を優先する', () => {
@@ -35,5 +35,11 @@ describe('作物', () => {
 	it('対象の作物を1つずつに分ける', () => {
 		expect(splitCrops('トマト、ナス・キュウリ')).toEqual(['トマト', 'ナス', 'キュウリ']);
 		expect(splitCrops('')).toEqual([]);
+	});
+
+	it('作物ごとの割合：数がなければ等分、「6棟」のように書けばその割合', () => {
+		expect(cropShares('米、メロン')).toEqual([['米', 0.5], ['メロン', 0.5]]);
+		expect(cropShares('メロン6棟、キュウリ1棟、ズッキーニ３棟')).toEqual([['メロン', 0.6], ['キュウリ', 0.1], ['ズッキーニ', 0.3]]);
+		expect(cropShares('')).toEqual([]);
 	});
 });

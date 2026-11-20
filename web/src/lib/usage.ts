@@ -68,7 +68,7 @@ export function guessUsage(name: string, categoryName: string): string {
 const CROPS: [string, RegExp][] = [
 	[
 		'米',
-		/水稲|稲(?!荷)|くまさん|みなちから|夢あおば|(?<!立)米(?!ぬか)|コンバイン|箱粒剤|イノーバ|オリゼメート|コラトツプ|フジワン|ブラシン|ノンブラス|バリダシン|モンカット|クリンチャー|クレマート|ダブルカット|テクリード|スクミ|タチガレ|ノービエース|プリロッソ|オーケストラ|くまオール|カスミン|ベルクート|一空紙袋|サイロ|ゴム印|数字セット/
+		/水稲|稲(?!荷)|くまさん|みなちから|夢あおば|(?<!立)米(?!ぬか)|コンバイン|箱粒剤|イノーバ|オリゼメート|コラトツプ|フジワン|ブラシン|ノンブラス|バリダシン|モンカット|クリンチャー|クレマート|ダブルカット|テクリード|スクミ|タチガレ|ノービエース|プリロッソ|オーケストラ|くまオール|カスミン|ベルクート|ヒッサツ|一空紙袋|サイロ|ゴム印|数字セット/
 	],
 	['メロン', /メロン|アールス|アンデス|ミツバチ/],
 	['キュウリ', /キュウリ|胡瓜/],
@@ -89,4 +89,21 @@ export function splitCrops(crops: string): string[] {
 		.split(/[、,，・\/／\s]+/)
 		.map((c) => c.trim())
 		.filter(Boolean);
+}
+
+/**
+ * 対象の作物ごとに、金額を何割ずつ入れるかを返す
+ * 「メロン6棟、キュウリ1棟」のように数が書いてあれば、その数の割合で分ける。数がなければ等分する
+ */
+export function cropShares(crops: string): [string, number][] {
+	const weights = new Map<string, number>();
+	for (const part of splitCrops(crops)) {
+		// 全角の数字も読めるように半角にそろえてから、末尾の「数＋棟」を切り出す
+		const m = part.normalize('NFKC').match(/^(.+?)([0-9]+(?:\.[0-9]+)?)棟?$/);
+		const name = m ? m[1].trim() : part;
+		const w = m ? Number(m[2]) : 1;
+		if (w > 0) weights.set(name, (weights.get(name) ?? 0) + w);
+	}
+	const total = [...weights.values()].reduce((s, w) => s + w, 0);
+	return [...weights].map(([name, w]) => [name, w / total]);
 }
