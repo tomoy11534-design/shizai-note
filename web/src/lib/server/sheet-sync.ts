@@ -1,7 +1,7 @@
 // Googleスプレッドシートとの連携（明細の取り込みと、在庫一覧・履歴の書き出し）
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { guessCategory, parseStatement, type StatementRow } from './statement.js';
+import { guessCategory, parseStatement, specKey, type StatementRow } from './statement.js';
 import { guessCrop, guessUsage } from '../usage.js';
 import { adminClient } from './supabase-admin.js';
 
@@ -52,7 +52,8 @@ interface PurchaseRow {
 	memo: string;
 }
 
-const itemKey = (name: string, spec: string) => `${name}\u0000${spec}`;
+// 品名と規格で資材を見分ける（規格は「2K」「2KG」のような書き方のゆれをそろえてから比べる）
+const itemKey = (name: string, spec: string) => `${name}\u0000${specKey(spec)}`;
 const todayJst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
 
 export interface SheetTable {
