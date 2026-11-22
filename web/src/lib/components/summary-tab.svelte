@@ -3,13 +3,17 @@
 	import { PURCHASE_TYPES } from '#lib/calc.js';
 	import { fmt } from '#lib/format.js';
 	import { cropShares } from '#lib/usage.js';
+	import CropFillPanel from './crop-fill-panel.svelte';
 
 	const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-	const colLabel = (m: number) => (m ? `${m}月` : '月不明');
+	const monthLabel = (m: number) => (m ? `${m}月` : '月不明');
 	const money = (v: number | undefined) => (v ? Math.round(v).toLocaleString('ja-JP') : '');
 
 	let year = $derived(app.ui.summaryYear);
 	let by = $derived(app.ui.summaryBy);
+	// 'year' のときは、年を横に並べて何年分かを比べる
+	let byYear = $derived(app.ui.summarySpan === 'year');
+	const colLabel = (c: number) => (byYear ? `${c}年` : monthLabel(c));
 	// 記録がない年を開いたときに案内する、ひとつ前の記録がある年
 	let earlierYear = $derived(app.purchaseYears.find((y) => y < year));
 
@@ -27,22 +31,27 @@
 	}
 	let itemById = $derived(new Map(app.items.map((i) => [i.id, i])));
 
-	// 月別・カテゴリ別（用途区分別・作物別）の購入金額（「年だけ」の購入は月不明＝0）
+	// 月別（または年別）・カテゴリ別（用途区分別・作物別）の購入金額（「年だけ」の購入は月不明＝0）
 	let amount = $derived.by(() => {
 		const map = new Map<string, Record<number, number>>();
 		for (const [itemId, list] of app.purchases) {
 			for (const p of list) {
-				if (p.year !== year) continue;
+				if (!byYear && p.year !== year) continue;
+				const col = byYear ? p.year : (p.month ?? 0);
 				for (const [key, share] of groupsOf(p.event.category_name, itemId)) {
 					const row = map.get(key) ?? {};
-					row[p.month ?? 0] = (row[p.month ?? 0] ?? 0) + p.price * p.qty * share;
+					row[col] = (row[col] ?? 0) + p.price * p.qty * share;
 					map.set(key, row);
 				}
 			}
 		}
 		return map;
 	});
-	let amountCols = $derived([...MONTHS, ...([...amount.values()].some((r) => r[0]) ? [0] : [])]);
+	let amountCols = $derived(
+		byYear
+			? [...new Set([...amount.values()].flatMap((r) => Object.keys(r).map(Number)))].sort((a, b) => a - b)
+			: [...MONTHS, ...([...amount.values()].some((r) => r[0]) ? [0] : [])]
+	);
 	const sum = (row: Record<number, number> | undefined, cols: number[]) => cols.reduce((s, m) => s + (row?.[m] ?? 0), 0);
 	let amountRows = $derived.by(() => {
 		const keys = [...amount.keys()];
@@ -80,24 +89,33 @@
 
 <div class="panel">
 	<div class="panel-head">
-		<h2>月別・{BY_LABELS[by]}別の購入金額</h2>
+		<h2>{byYear ? '年別' : '月別'}・{BY_LABELS[by]}別の購入金額</h2>
 		<label class="inline">分け方
 			<select bind:value={app.ui.summaryBy}>
 				{#each Object.entries(BY_LABELS) as [k, label] (k)}<option value={k}>{label}</option>{/each}
 			</select>
 		</label>
-		<label class="inline year-select">年
-			<select bind:value={app.ui.summaryYear}>
-				{#each app.purchaseYears as y (y)}<option value={y}>{y}年</option>{/each}
+		<label class="inline">並べ方
+			<select bind:value={app.ui.summarySpan}>
+				<option value="month">月ごと（1年分）</option>
+				<option value="year">年ごとに比べる</option>
 			</select>
 		</label>
+		{#if !byYear}
+			<label class="inline year-select">年
+				<select bind:value={app.ui.summaryYear}>
+					{#each app.purchaseYears as y (y)}<option value={y}>{y}年</option>{/each}
+				</select>
+			</label>
+		{/if}
 	</div>
 	<p class="note">
 		入庫と過去の購入の金額の合計です（円）。登録したときの最初の在庫は含みません。
+		{#if byYear}「年ごとに比べる」では、記録があるすべての年を横に並べます。{/if}
 		{#if by === 'usage'}用途区分は資材の今の設定で分けます（資材の「編集」で変えられます）。{/if}
 		{#if by === 'crop'}資材の「対象の作物」で分けます。作物が複数ある資材は、金額を等分します。「メロン6棟、キュウリ1棟」のように数を書いた資材は、その割合で分けます。{/if}
 	</p>
-	{#if !amountRows.length && earlierYear}
+	{#if !byYear && !amountRows.length && earlierYear}
 		<p><button type="button" class="btn" onclick={() => (app.ui.summaryYear = earlierYear!)}>{earlierYear}年の集計を見る</button></p>
 	{/if}
 	<div class="table-scroll">
@@ -114,7 +132,7 @@
 						<td class="num">{grandTotal ? `${((sum(amount.get(cat), amountCols) / grandTotal) * 100).toFixed(1)}%` : ''}</td>
 					</tr>
 				{:else}
-					<tr><td colspan="16" class="empty">{year}年の購入記録はありません。</td></tr>
+					<tr><td colspan="16" class="empty">{byYear ? '' : `${year}年の`}購入記録はありません。</td></tr>
 				{/each}
 				{#if amountRows.length}
 					<tr class="total">
@@ -129,13 +147,15 @@
 	</div>
 </div>
 
+{#if by === 'crop'}<CropFillPanel />{/if}
+
 <div class="panel">
-	<h2>資材ごとの月別入出庫数</h2>
+	<h2>資材ごとの月別入出庫数（{year}年）</h2>
 	<p class="note">「入」が入庫（購入）、「出」が出庫の数量です。</p>
 	<div class="table-scroll">
 		<table class="data-table compact">
 			<thead>
-				<tr><th class="sticky-col">資材名</th>{#each qtyCols as m (m)}<th class="num">{colLabel(m)}</th>{/each}<th class="num">合計</th></tr>
+				<tr><th class="sticky-col">資材名</th>{#each qtyCols as m (m)}<th class="num">{monthLabel(m)}</th>{/each}<th class="num">合計</th></tr>
 			</thead>
 			<tbody>
 				{#each qty as [id, r] (id)}

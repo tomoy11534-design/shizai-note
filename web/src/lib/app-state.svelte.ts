@@ -125,6 +125,8 @@ class AppState {
 		summaryYear: new Date().getFullYear(),
 		// 購入金額を何ごとに分けて集計するか
 		summaryBy: 'category' as 'category' | 'usage' | 'crop',
+		// 集計の表を月ごとに並べるか、年ごとに並べて比べるか
+		summarySpan: 'month' as 'month' | 'year',
 		chartMode: 'yen' as 'yen' | 'index',
 		chartSel: [] as { id: string; slot: number }[],
 		chartTouched: false,
