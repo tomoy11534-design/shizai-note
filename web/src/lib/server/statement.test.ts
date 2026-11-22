@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findColumns, guessCategory, parseDate, parseStatement } from './statement.js';
+import { findColumns, guessCategory, parseDate, parseStatement, specKey } from './statement.js';
 
 const HEADER = ['連番', 'ＪＡ処理日', '取扱支所名', '品名コード', '品名', '規格', '数量', '単価', '金額', '値引金額', '値引後金額', '消費税', '税抜金額'];
 
@@ -45,5 +45,22 @@ describe('お買上げ明細の読み取り', () => {
 		expect(guessCategory('アドマイヤー1粒')).toBe('農薬');
 		expect(guessCategory('過石(粒) 樹脂袋')).toBe('肥料');
 		expect(guessCategory('ふしぎな品物')).toBeNull();
+	});
+});
+
+describe('規格の書き方のゆれ', () => {
+	it('数のうしろの単位だけ違うものは同じ規格とみなす', () => {
+		expect(specKey('2K')).toBe(specKey('2KG'));
+		expect(specKey('500')).toBe(specKey('500ML'));
+		expect(specKey('500')).toBe(specKey('500G'));
+		expect(specKey('５００ｍｌ')).toBe(specKey('500ML'));
+	});
+
+	it('サイズが違うものや、ほかの書き方は別の規格のまま', () => {
+		expect(specKey('100ML')).not.toBe(specKey('500ML'));
+		expect(specKey('1KG')).not.toBe(specKey('10KG'));
+		expect(specKey('0.075*135*100')).not.toBe(specKey('0.075*185*100'));
+		expect(specKey('M')).not.toBe(specKey('L'));
+		expect(specKey('')).toBe('');
 	});
 });

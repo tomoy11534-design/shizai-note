@@ -25,6 +25,18 @@ export const norm = (s: unknown) =>
 		.replace(/\s+/g, ' ')
 		.trim();
 
+/**
+ * 同じ資材かどうかを見分けるための規格。明細の書き方のゆれをそろえる
+ * 「2K」と「2KG」、「500」と「500ML」「500G」のように、数のうしろの単位だけ違うものは同じとみなす
+ * （「100ML」と「500ML」のように数が違うもの＝別のサイズは、別の資材のまま）
+ */
+export function specKey(spec: string): string {
+	return norm(spec)
+		.toUpperCase()
+		.replace(/\s+/g, '')
+		.replace(/([0-9])(KG|K|ML|CC|G|L)$/, '$1');
+}
+
 // 「1,234円」のような表示も数として読む。空なら null
 function num(s: unknown): number | null {
 	const t = norm(s).replace(/[,，円¥]/g, '');
