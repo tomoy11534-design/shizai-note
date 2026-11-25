@@ -77,6 +77,7 @@
 	<header class="app-header">
 		<h1>{app.household?.name ?? '資材ノート'}</h1>
 		<div class="header-right">
+			<a class="header-link" href={app.demo ? '/melon?demo' : '/melon'}>贈答メロン帳</a>
 			<span class="sync" aria-live="polite">{syncText}</span>
 			<button type="button" class="icon-btn" title="最新に更新" aria-label="最新に更新" onclick={() => app.loadHousehold()}>⟳</button>
 		</div>
