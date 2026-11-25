@@ -86,6 +86,8 @@ body {
 }
 
 .app-header h1 { margin: 0; font-size: 1.2rem; }
+/* 資材ノートと贈答メロン帳を行き来するリンク */
+.header-link { color: #fff; font-size: 0.85rem; text-decoration: underline; white-space: nowrap; }
 .header-right { display: flex; align-items: center; gap: 8px; }
 .sync { font-size: 0.8rem; opacity: 0.9; }
 .app-header .icon-btn { color: #fff; border-color: rgba(255, 255, 255, 0.4); }
