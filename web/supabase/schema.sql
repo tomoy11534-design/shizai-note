@@ -747,6 +747,9 @@ create table if not exists public.melon_seasons (
 	capacity int not null default 50 check (capacity between 0 and 99999),
 	primary key (household_id, season)
 );
+-- 品物ごとの上限（{"品物の名前": ケース数}。空なら capacity を使う）
+alter table public.melon_seasons
+	add column if not exists product_caps jsonb not null default '{}'::jsonb;
 
 -- ===== 直売の記録（直売所などで売った玉数と金額） =====
 create table if not exists public.melon_direct_sales (

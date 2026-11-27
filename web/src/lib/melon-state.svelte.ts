@@ -11,6 +11,9 @@ export const todayJst = () => new Date(Date.now() + 9 * 3600e3).toISOString().sl
 
 // データベースの準備（SQLの実行）がまだのときのエラーを、分かる言葉にする
 function friendly(e: { message: string; code?: string }) {
+	if (/product_caps/.test(e.message)) {
+		return '品物ごとの上限を保存する準備がまだです。管理している人に「add-melon-product-caps.sql を実行してください」と伝えてください。';
+	}
 	if (e.code === '42P01' || e.code === 'PGRST205' || /melon_/.test(e.message)) {
 		return '贈答メロン帳のデータベースの準備がまだです。管理している人に「add-melon-orders.sql を実行してください」と伝えてください。';
 	}
@@ -21,11 +24,14 @@ class MelonState {
 	orders = $state.raw<MelonOrder[]>([]);
 	sales = $state.raw<DirectSale[]>([]);
 	capacities = $state.raw<Map<number, number>>(new Map());
+	// 品物ごとの上限（年ごと。{"ラブコール": 50} の形）
+	productCapsBySeason = $state.raw<Map<number, Record<string, number>>>(new Map());
 	loaded = $state(false);
 	error = $state('');
 	season = $state(new Date().getMonth() >= 8 ? new Date().getFullYear() + 1 : new Date().getFullYear());
 
 	capacity = $derived(this.capacities.get(this.season) ?? DEFAULT_CAPACITY);
+	productCaps = $derived(this.productCapsBySeason.get(this.season) ?? {});
 	seasonOrders = $derived(this.orders.filter((o) => o.season === this.season));
 	seasonSales = $derived(this.sales.filter((s) => s.sold_on.startsWith(String(this.season))));
 	// 申込や直売の記録がある年と、今の年（新しい順）
@@ -35,7 +41,7 @@ class MelonState {
 		)
 	);
 	// 入力の候補（前に使った品物名・発送の時期・直売の場所）
-	products = $derived([...new Set(this.orders.map((o) => o.product).filter(Boolean))]);
+	products = $derived([...new Set([...Object.keys(this.productCaps), ...this.orders.map((o) => o.product)].filter(Boolean))]);
 	timings = $derived([...new Set(this.orders.map((o) => o.ship_timing).filter(Boolean))]);
 	places = $derived([...new Set(this.sales.map((s) => s.place).filter(Boolean))]);
 
@@ -50,7 +56,7 @@ class MelonState {
 		const [o, s, c] = await Promise.all([
 			supabase.from('melon_orders').select('*').eq('household_id', hid).order('created_at'),
 			supabase.from('melon_direct_sales').select('*').eq('household_id', hid).order('sold_on'),
-			supabase.from('melon_seasons').select('season, capacity').eq('household_id', hid)
+			supabase.from('melon_seasons').select('*').eq('household_id', hid)
 		]);
 		const err = o.error ?? s.error ?? c.error;
 		this.error = err ? friendly(err) : '';
@@ -58,6 +64,7 @@ class MelonState {
 			this.orders = o.data as MelonOrder[];
 			this.sales = s.data as DirectSale[];
 			this.capacities = new Map((c.data ?? []).map((r) => [r.season as number, r.capacity as number]));
+			this.productCapsBySeason = new Map((c.data ?? []).map((r) => [r.season as number, (r.product_caps ?? {}) as Record<string, number>]));
 		}
 		this.loaded = true;
 	}
@@ -102,6 +109,15 @@ class MelonState {
 			if (error) throw new Error(friendly(error));
 		}
 		this.capacities = new Map([...this.capacities, [this.season, capacity]]);
+	}
+
+	// 品物ごとの上限を決める（空にすると、全部あわせた上限に戻る）
+	async setProductCaps(caps: Record<string, number>) {
+		if (!app.demo) {
+			const { error } = await supabase.from('melon_seasons').upsert({ household_id: app.householdId, season: this.season, capacity: this.capacity, product_caps: caps });
+			if (error) throw new Error(friendly(error));
+		}
+		this.productCapsBySeason = new Map([...this.productCapsBySeason, [this.season, caps]]);
 	}
 
 	async addSale(input: SaleInput) {
@@ -151,6 +167,7 @@ class MelonState {
 			o({ season: y - 1, customer_name: '高橋 春子', customer_phone: '080-0000-5555', cases: 1, paid_on: `${y - 1}-03-01`, shipped_on: `${y - 1}-06-05`, notified_on: `${y - 1}-06-05` }),
 			o({ season: y - 1, customer_name: '山田 花子', customer_phone: '090-0000-1111', cases: 1, paid_on: `${y - 1}-03-01`, shipped_on: `${y - 1}-06-05`, notified_on: `${y - 1}-06-05` })
 		];
+		this.productCapsBySeason = new Map([[y, { ラブコール: 50, レノンハート: 50, 食べ比べセット: 50, アンデス: 50 }]]);
 		this.sales = [{ id: crypto.randomUUID(), household_id: hid, sold_on: `${y}-06-08`, place: '直売所', fruits: 24, amount: 36000, memo: '', created_at: '' }];
 	}
 }
