@@ -127,6 +127,8 @@ class AppState {
 		summaryBy: 'category' as 'category' | 'usage' | 'crop',
 		// 集計の表を月ごとに並べるか、年ごとに並べて比べるか
 		summarySpan: 'month' as 'month' | 'year',
+		// 集計に入れる費用（すべて・変動費だけ・固定費だけ。MQ会計で見るとき用）
+		summaryMq: 'all' as 'all' | 'V' | 'F',
 		chartMode: 'yen' as 'yen' | 'index',
 		chartSel: [] as { id: string; slot: number }[],
 		chartTouched: false,
