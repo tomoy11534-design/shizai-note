@@ -4,7 +4,7 @@
 	import { app } from '#lib/app-state.svelte.js';
 	import { errorMessage } from '#lib/format.js';
 	import { melon, type OrderInput } from '#lib/melon-state.svelte.js';
-	import type { MelonOrder } from '#lib/melon.js';
+	import { productKey, productSummary, type MelonOrder } from '#lib/melon.js';
 
 	let { id, prefill, onclose }: { id?: string; prefill?: MelonOrder; onclose: () => void } = $props();
 
@@ -32,6 +32,10 @@
 		memo: editId ? (src?.memo ?? '') : ''
 	});
 	if (editId && src) f.season = src.season;
+	// 選んだ品物の残り（この申込を入れる前の数。直すときは、この申込の分を除いて数える）
+	let pick = $derived(
+		productSummary(melon.seasonOrders.filter((o) => o.id !== editId), melon.productCaps).find((r) => r.cap !== null && productKey(r.product) === productKey(f.product))
+	);
 	let saving = $state(false);
 	let confirmDelete = $state(false);
 
@@ -88,7 +92,11 @@
 	{/if}
 
 	<p class="form-section full">品物</p>
-	<label class="field full"><span>品物の名前</span><input bind:value={f.product} list="melon-products" maxlength="50" placeholder="例：食べ比べセット" /></label>
+	<label class="field full">
+		<span>品物の名前</span>
+		<input bind:value={f.product} list="melon-products" maxlength="50" placeholder="例：食べ比べセット" />
+		{#if pick && pick.left !== null}<small class="note" class:warn-text={pick.left < (Number(f.cases) || 1)}>{pick.product}は、あと{Math.max(0, pick.left)}ケース受けられます。</small>{/if}
+	</label>
 	<label class="field half"><span>箱数</span><input type="number" min="1" inputmode="numeric" bind:value={f.cases} /></label>
 	<label class="field half"><span>1箱の値段（円）</span><input type="number" min="0" inputmode="numeric" bind:value={f.unit_price} /></label>
 	<label class="field half"><span>発送の時期</span><input bind:value={f.ship_timing} list="melon-timings" maxlength="30" placeholder="例：6月" /></label>
@@ -120,3 +128,7 @@
 	<datalist id="melon-products">{#each melon.products as p (p)}<option value={p}></option>{/each}</datalist>
 	<datalist id="melon-timings">{#each melon.timings as t (t)}<option value={t}></option>{/each}</datalist>
 </form>
+
+<style>
+	.warn-text { color: var(--danger); font-weight: bold; }
+</style>

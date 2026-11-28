@@ -3,7 +3,7 @@
 	import { app } from '#lib/app-state.svelte.js';
 	import { errorMessage } from '#lib/format.js';
 	import { melon } from '#lib/melon-state.svelte.js';
-	import { destination, itemText, seasonSummary, shippedNotice, shippingLabel, stageOf, STAGE_LABELS, type OrderStage } from '#lib/melon.js';
+	import { destination, itemText, productSummary, remainingText, seasonSummary, totalCapacity, shippedNotice, shippingLabel, stageOf, STAGE_LABELS, type OrderStage } from '#lib/melon.js';
 	import Tile from './tile.svelte';
 
 	let { onedit }: { onedit: (id?: string) => void } = $props();
@@ -13,7 +13,39 @@
 	let capInput = $state('');
 	let busy = $state('');
 
-	let summary = $derived(seasonSummary(melon.seasonOrders, melon.capacity));
+	let capTotal = $derived(totalCapacity(melon.capacity, melon.productCaps));
+	let summary = $derived(seasonSummary(melon.seasonOrders, capTotal));
+	let byProduct = $derived(Object.keys(melon.productCaps).length > 0);
+	let rows = $derived(productSummary(melon.seasonOrders, melon.productCaps));
+
+	// 品物ごとの上限を直す欄（名前を空にした行は消える）
+	let editingCaps = $state(false);
+	let capRows = $state<{ product: string; cap: string }[]>([]);
+	function startCaps() {
+		const cur = Object.entries(melon.productCaps);
+		capRows = cur.length
+			? cur.map(([product, cap]) => ({ product, cap: String(cap) }))
+			: [...new Set(melon.products)].map((product) => ({ product, cap: String(melon.capacity) }));
+		if (!capRows.length) capRows = [{ product: '', cap: '50' }];
+		editingCaps = true;
+	}
+	async function saveCaps() {
+		const caps: Record<string, number> = {};
+		for (const r of capRows) {
+			const name = r.product.trim();
+			if (!name) continue;
+			const n = Math.round(Number(r.cap));
+			if (!Number.isFinite(n) || n < 0) return app.toast(`${name}の上限を数字で入れてください。`, true);
+			caps[name] = n;
+		}
+		try {
+			await melon.setProductCaps(caps);
+			editingCaps = false;
+			app.toast(Object.keys(caps).length ? '品物ごとの上限を決めました。' : '品物ごとの上限をやめて、全部あわせた上限に戻しました。');
+		} catch (err) {
+			app.toast(errorMessage(err), true);
+		}
+	}
 	// 並びは申込が来た順のまま（ボタンを押してもカードが動かないように）。段階ごとに見たいときは上の絞り込みを使う
 	const ORDER: OrderStage[] = ['unpaid', 'unshipped', 'unnotified', 'done'];
 	let list = $derived(melon.seasonOrders.filter((o) => !filter || stageOf(o) === filter).toSorted((a, b) => a.created_at.localeCompare(b.created_at)));
@@ -46,7 +78,7 @@
 </script>
 
 <div class="tiles">
-	<Tile label="受付したケース" value="{summary.cases} / {melon.capacity}" sub="{summary.orders}件の申込" />
+	<Tile label="受付したケース" value="{summary.cases} / {capTotal}" sub="{summary.orders}件の申込" />
 	<Tile label="残り" value="{summary.left} ケース" sub={summary.left < 0 ? '上限をこえています' : ''} />
 	<Tile label="入金待ち" value="{summary.count.unpaid} 件" sub={summary.unpaidAmount ? `${yen(summary.unpaidAmount)}円` : ''} />
 	<Tile label="発送待ち・連絡待ち" value="{summary.count.unshipped} 件・{summary.count.unnotified} 件" />
@@ -57,16 +89,54 @@
 		<h2>{melon.season}年の申込</h2>
 		<button type="button" class="btn btn-primary" onclick={() => onedit()}>＋ 申込を入れる</button>
 	</div>
-	<p class="note">
-		受付の上限は {melon.capacity} ケースです。
-		{#if editingCap}
-			<input class="cap-input" type="number" min="0" inputmode="numeric" bind:value={capInput} aria-label="受付の上限（ケース）" />
-			<button type="button" class="btn btn-small" onclick={saveCap}>決める</button>
-			<button type="button" class="btn btn-small" onclick={() => (editingCap = false)}>やめる</button>
-		{:else}
-			<button type="button" class="link-btn" onclick={() => { capInput = String(melon.capacity); editingCap = true; }}>上限を変える</button>
-		{/if}
-	</p>
+	{#if editingCaps}
+		<div class="caps-edit">
+			<p class="note">品物ごとに、受け付けるケース数を決めます。品物の名前を空にすると、その行は消えます。全部の行を空にすると、全部あわせた上限（{melon.capacity}ケース）に戻ります。</p>
+			{#each capRows as r, i (i)}
+				<div class="cap-row">
+					<input bind:value={r.product} list="melon-cap-products" maxlength="50" placeholder="品物の名前" aria-label="品物の名前" />
+					<input class="cap-input" type="number" min="0" inputmode="numeric" bind:value={r.cap} aria-label="{r.product || '品物'}の上限（ケース）" />
+					<span class="note">ケース</span>
+				</div>
+			{/each}
+			<div class="item-buttons">
+				<button type="button" class="btn btn-small" onclick={() => (capRows = [...capRows, { product: '', cap: '50' }])}>＋ 品物を足す</button>
+				<button type="button" class="btn btn-small btn-primary" onclick={saveCaps}>決める</button>
+				<button type="button" class="btn btn-small" onclick={() => (editingCaps = false)}>やめる</button>
+			</div>
+			<datalist id="melon-cap-products">{#each melon.products as p (p)}<option value={p}></option>{/each}</datalist>
+		</div>
+	{:else if byProduct}
+		<table class="caps">
+			<thead><tr><th>品物</th><th class="num">受付</th><th class="num">残り</th></tr></thead>
+			<tbody>
+				{#each rows as r (r.product)}
+					<tr class:over={r.left !== null && r.left < 0}>
+						<td>{r.product}</td>
+						<td class="num">{r.cases}{r.cap !== null ? ` / ${r.cap}` : ''}</td>
+						<td class="num">{r.left === null ? '上限なし' : r.left < 0 ? `${-r.left}こえ` : r.left}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+		<div class="item-buttons">
+			<button type="button" class="btn btn-small" onclick={() => melon.copy(remainingText(rows, melon.season), '残りの数')}>残りの数をコピー</button>
+			<button type="button" class="link-btn" onclick={startCaps}>上限を変える</button>
+		</div>
+		<p class="note">電話やLINEの申込を入れたら、「残りの数をコピー」をホームページの会社に送ると、ホームページの「残り◯ケース」を直してもらえます。ホームページから来た申込もここに入れておくと、数が合います。</p>
+	{:else}
+		<p class="note">
+			受付の上限は {melon.capacity} ケースです。
+			{#if editingCap}
+				<input class="cap-input" type="number" min="0" inputmode="numeric" bind:value={capInput} aria-label="受付の上限（ケース）" />
+				<button type="button" class="btn btn-small" onclick={saveCap}>決める</button>
+				<button type="button" class="btn btn-small" onclick={() => (editingCap = false)}>やめる</button>
+			{:else}
+				<button type="button" class="link-btn" onclick={() => { capInput = String(melon.capacity); editingCap = true; }}>上限を変える</button>
+				<button type="button" class="link-btn" onclick={startCaps}>品物ごとに上限を決める</button>
+			{/if}
+		</p>
+	{/if}
 	<div class="chips" role="group" aria-label="絞り込み">
 		<button type="button" class="chip" class:active={filter === ''} onclick={() => (filter = '')}>すべて {melon.seasonOrders.length}</button>
 		{#each ORDER as s (s)}
@@ -118,5 +188,13 @@
 	.step { font: inherit; font-size: 0.9rem; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); cursor: pointer; padding: 4px 6px; }
 	.step.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-dark); font-weight: bold; }
 	.cap-input { width: 6em; display: inline-block; }
+	/* 品物ごとの受付と残り */
+	.caps { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+	.caps th, .caps td { border-bottom: 1px solid var(--border); padding: 6px 4px; text-align: left; }
+	.caps .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	.caps tr.over td { color: var(--danger); font-weight: bold; }
+	.caps-edit { display: grid; gap: 8px; }
+	.cap-row { display: flex; gap: 6px; align-items: center; }
+	.cap-row input:first-child { flex: 1; min-width: 0; }
 	.link-btn { background: none; border: none; padding: 0; color: var(--brand); text-decoration: underline; font: inherit; cursor: pointer; }
 </style>

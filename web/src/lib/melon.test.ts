@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { directSummary, formatPostal, invitation, pastCustomers, seasonSummary, shippedNotice, shippingLabel, stageOf, type MelonOrder } from './melon.js';
+import { directSummary, formatPostal, invitation, pastCustomers, productSummary, remainingText, seasonSummary, shippedNotice, shippingLabel, stageOf, totalCapacity, type MelonOrder } from './melon.js';
 
 // テスト用の申込（必要なところだけ変える）
 function order(p: Partial<MelonOrder>): MelonOrder {
@@ -42,6 +42,31 @@ describe('申込の段階', () => {
 		const s = seasonSummary([order({ cases: 2 }), order({ cases: 3, paid_on: '2027-04-01' })], 50);
 		expect(s).toMatchObject({ orders: 2, cases: 5, left: 45, total: 25000, unpaidAmount: 10000 });
 		expect(s.count).toEqual({ unpaid: 1, unshipped: 1, unnotified: 0, done: 0 });
+	});
+});
+
+describe('品物ごとの上限', () => {
+	const caps = { ラブコール: 50, 食べ比べセット: 50 };
+
+	it('品物ごとに受付ケース数と残りを出す（空白や全角のちがいは同じ品物）', () => {
+		const rows = productSummary([order({ product: '食べ比べ セット', cases: 2 }), order({ product: 'ラブコール', cases: 14 }), order({ product: 'アンデス', cases: 1 })], caps);
+		expect(rows).toEqual([
+			{ product: 'ラブコール', cases: 14, cap: 50, left: 36 },
+			{ product: '食べ比べセット', cases: 2, cap: 50, left: 48 },
+			{ product: 'アンデス', cases: 1, cap: null, left: null }
+		]);
+	});
+
+	it('全部あわせた上限は、品物ごとの上限の合計（決めていなければ今まで通り）', () => {
+		expect(totalCapacity(50, caps)).toBe(100);
+		expect(totalCapacity(50, {})).toBe(50);
+	});
+
+	it('残りを知らせる文には、上限を決めた品物だけを出す', () => {
+		const t = remainingText(productSummary([order({ product: 'ラブコール', cases: 14 }), order({ product: 'アンデス' })], caps), 2027);
+		expect(t).toContain('・ラブコール：残り36ケース（受付14／50）');
+		expect(t).toContain('・食べ比べセット：残り50ケース');
+		expect(t).not.toContain('アンデス');
 	});
 });
 

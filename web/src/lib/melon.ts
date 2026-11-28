@@ -65,6 +65,47 @@ export function seasonSummary(orders: MelonOrder[], capacity: number) {
 	return { orders: orders.length, cases, left: capacity - cases, count, total, unpaidAmount: total - paid };
 }
 
+// 品物の名前をくらべやすくする（全角・半角や空白のちがいを気にしない）
+export const productKey = (s: string) => s.normalize('NFKC').replace(/\s+/g, '');
+
+export interface ProductRow {
+	product: string;
+	cases: number;
+	/** 上限（決めていない品物は null） */
+	cap: number | null;
+	left: number | null;
+}
+
+/**
+ * 品物ごとの受付ケース数と残り
+ * 上限を決めた品物を決めた順に並べ、そのあとに上限を決めていない品物（申込にだけある品物）を並べる
+ */
+export function productSummary(orders: Pick<MelonOrder, 'product' | 'cases'>[], caps: Record<string, number>): ProductRow[] {
+	const rows = new Map<string, ProductRow>();
+	for (const [product, cap] of Object.entries(caps)) rows.set(productKey(product), { product, cases: 0, cap, left: cap });
+	for (const o of orders) {
+		const k = productKey(o.product);
+		let r = rows.get(k);
+		if (!r) rows.set(k, (r = { product: o.product.trim() || '（品物の名前なし）', cases: 0, cap: null, left: null }));
+		r.cases += o.cases;
+		if (r.cap !== null) r.left = r.cap - r.cases;
+	}
+	return [...rows.values()];
+}
+
+/** 全部あわせた上限（品物ごとに決めていれば、その合計） */
+export function totalCapacity(capacity: number, caps: Record<string, number>): number {
+	const v = Object.values(caps);
+	return v.length ? v.reduce((s, n) => s + n, 0) : capacity;
+}
+
+/** 品物ごとの残りを知らせる文（ホームページの「残り◯ケース」を直してもらうときに貼る） */
+export function remainingText(rows: ProductRow[], season: number): string {
+	const lines = [`${season}年の贈答用メロンの残り（電話・LINE・ホームページの申込をあわせた数）`];
+	for (const r of rows) if (r.left !== null) lines.push(`・${r.product}：残り${Math.max(0, r.left)}ケース（受付${r.cases}／${r.cap}）`);
+	return lines.join('\n');
+}
+
 /** お届け先（「注文した人と同じ」なら注文した人） */
 export function destination(o: MelonOrder) {
 	return o.to_same
