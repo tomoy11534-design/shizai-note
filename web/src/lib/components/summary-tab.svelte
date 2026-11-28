@@ -2,6 +2,7 @@
 	import { app } from '#lib/app-state.svelte.js';
 	import { PURCHASE_TYPES } from '#lib/calc.js';
 	import { fmt } from '#lib/format.js';
+	import { MQ_LABELS, mqClass, pctText, yoyPct } from '#lib/mq.js';
 	import { cropShares } from '#lib/usage.js';
 	import CropFillPanel from './crop-fill-panel.svelte';
 
@@ -13,7 +14,17 @@
 	let by = $derived(app.ui.summaryBy);
 	// 'year' のときは、年を横に並べて何年分かを比べる
 	let byYear = $derived(app.ui.summarySpan === 'year');
-	const colLabel = (c: number) => (byYear ? `${c}年` : monthLabel(c));
+	// 今年は明細がまだそろっていないので「途中」と書き、前の年とくらべない
+	const thisYear = new Date(Date.now() + 9 * 3600e3).getUTCFullYear();
+	const colLabel = (c: number) => (byYear ? (c === thisYear ? `${c}年（途中）` : `${c}年`) : monthLabel(c));
+	let mq = $derived(app.ui.summaryMq);
+	// 年ごとに並べたときの、前の年からの増え方（今年の列と、前の年がない列は出さない）
+	function yoyOf(row: Record<number, number> | undefined, col: number, i: number) {
+		if (!byYear || i === 0 || col === thisYear) return null;
+		const prev = amountCols[i - 1];
+		return prev === col - 1 ? yoyPct(row?.[prev], row?.[col] ?? 0) : null;
+	}
+	const colTotal = (c: number) => amountRows.reduce((s, r) => s + (amount.get(r)?.[c] ?? 0), 0);
 	// 記録がない年を開いたときに案内する、ひとつ前の記録がある年
 	let earlierYear = $derived(app.purchaseYears.find((y) => y < year));
 
@@ -37,6 +48,7 @@
 		for (const [itemId, list] of app.purchases) {
 			for (const p of list) {
 				if (!byYear && p.year !== year) continue;
+				if (mq !== 'all' && mqClass(p.event.category_name) !== mq) continue;
 				const col = byYear ? p.year : (p.month ?? 0);
 				for (const [key, share] of groupsOf(p.event.category_name, itemId)) {
 					const row = map.get(key) ?? {};
@@ -101,6 +113,13 @@
 				<option value="year">年ごとに比べる</option>
 			</select>
 		</label>
+		<label class="inline">費用
+			<select bind:value={app.ui.summaryMq}>
+				<option value="all">すべて</option>
+				<option value="V">変動費（V）だけ</option>
+				<option value="F">固定費（F）だけ</option>
+			</select>
+		</label>
 		{#if !byYear}
 			<label class="inline year-select">年
 				<select bind:value={app.ui.summaryYear}>
@@ -111,7 +130,8 @@
 	</div>
 	<p class="note">
 		入庫と過去の購入の金額の合計です（円）。登録したときの最初の在庫は含みません。
-		{#if byYear}「年ごとに比べる」では、記録があるすべての年を横に並べます。{/if}
+		{#if byYear}「年ごとに比べる」では、記録があるすべての年を横に並べ、金額の下に前の年からの増え方（%）を出します。まとめ買いをした年は大きく増えたり減ったりするので、何年かの流れで見てください。今年は明細がそろうまで「途中」です。{/if}
+		{#if mq !== 'all'}{MQ_LABELS[mq]}（{mq}）にあたるカテゴリだけを集計しています。{/if}
 		{#if by === 'usage'}用途区分は資材の今の設定で分けます（資材の「編集」で変えられます）。{/if}
 		{#if by === 'crop'}資材の「対象の作物」で分けます。作物が複数ある資材は、金額を等分します。「メロン6棟、キュウリ1棟」のように数を書いた資材は、その割合で分けます。{/if}
 	</p>
@@ -125,9 +145,13 @@
 			</thead>
 			<tbody>
 				{#each amountRows as cat (cat)}
+					{@const cls = by === 'category' ? mqClass(cat) : null}
 					<tr>
-						<td class="sticky-col">{cat}</td>
-						{#each amountCols as m (m)}<td class="num">{money(amount.get(cat)?.[m])}</td>{/each}
+						<td class="sticky-col">{cat}{#if cls}<span class="mq-tag" title="MQ会計での分け方">{cls}</span>{/if}</td>
+						{#each amountCols as m, i (m)}
+							{@const y = yoyOf(amount.get(cat), m, i)}
+							<td class="num">{money(amount.get(cat)?.[m])}{#if y !== null}<div class="yoy" class:up={y >= 0.5}>{pctText(y)}</div>{/if}</td>
+						{/each}
 						<td class="num">{money(sum(amount.get(cat), amountCols))}</td>
 						<td class="num">{grandTotal ? `${((sum(amount.get(cat), amountCols) / grandTotal) * 100).toFixed(1)}%` : ''}</td>
 					</tr>
@@ -137,7 +161,10 @@
 				{#if amountRows.length}
 					<tr class="total">
 						<td class="sticky-col">合計</td>
-						{#each amountCols as m (m)}<td class="num">{money(amountRows.reduce((s, c) => s + (amount.get(c)?.[m] ?? 0), 0))}</td>{/each}
+						{#each amountCols as m, i (m)}
+							{@const y = i > 0 ? yoyOf({ [amountCols[i - 1]]: colTotal(amountCols[i - 1]), [m]: colTotal(m) }, m, i) : null}
+							<td class="num">{money(colTotal(m))}{#if y !== null}<div class="yoy" class:up={y >= 0.5}>{pctText(y)}</div>{/if}</td>
+						{/each}
 						<td class="num">{money(grandTotal)}</td>
 						<td class="num">100%</td>
 					</tr>
@@ -146,6 +173,19 @@
 		</table>
 	</div>
 </div>
+
+{#if by === 'category'}
+	<details class="panel mq-help">
+		<summary><b>MQ会計で見るとき（変動費 V・固定費 F）</b></summary>
+		<p class="note">カテゴリの横の V・F は、農業でよく使われる分け方の例です。「費用」で「変動費だけ」「固定費だけ」を選ぶと、その分だけを集計します。分け方で「作物」を選ぶと、作物ごとの変動費・固定費も見られます。</p>
+		<ul class="note">
+			<li><b>変動費（V）</b>：作る量に合わせて増える費用。肥料・農薬・種苗・包装資材・被覆資材・燃料</li>
+			<li><b>固定費（F）</b>：作る量が増えてもあまり変わらない費用。機械部品・修理・工賃・施設資材・農機具・道具・作業用品</li>
+			<li>「その他」など上にないカテゴリは、どちらにも入れていません。</li>
+		</ul>
+		<p class="note">燃料（ハウスの暖房など）を固定費にする考え方もあります。最後は、相談している税理士さんなどの分け方に合わせてください。人件費・機械の減価償却・地代などは資材ノートに入っていないので、固定費の全部ではありません。</p>
+	</details>
+{/if}
 
 {#if by === 'crop'}<CropFillPanel />{/if}
 
@@ -177,3 +217,12 @@
 		</table>
 	</div>
 </div>
+
+<style>
+	/* 前の年からの増え方（増えたら注意の色） */
+	.yoy { font-size: 0.75rem; color: var(--muted); }
+	.yoy.up { color: var(--danger); }
+	.mq-tag { margin-left: 6px; font-size: 0.7rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; color: var(--muted); }
+	.mq-help summary { cursor: pointer; }
+	.mq-help ul { margin: 6px 0; padding-left: 1.2em; }
+</style>
